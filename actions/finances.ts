@@ -6,6 +6,8 @@ import { FinanceRecord } from "@/models/FinanceRecord";
 import { Shop } from "@/models/Shop";
 import { Category } from "@/models/Category";
 import { User } from "@/models/User";
+import { BankAccount } from "@/models/BankAccount";
+import { PettyCashAccount } from "@/models/PettyCashAccount";
 import { sanitizeInput } from "@/lib/sanitize";
 import {
   createFinanceRecordSchema,
@@ -40,7 +42,9 @@ export async function getFinanceRecordsAction(params: GetFinanceRecordsParams = 
   try {
     await connectDB();
 
-    const query: Record<string, unknown> = {};
+    const query: Record<string, unknown> = {
+      isDeleted: { $ne: true },
+    };
 
     // RBAC: Staff can strictly ONLY view their assigned shop's records
     if (role === "STAFF") {
@@ -88,6 +92,7 @@ export async function getFinanceRecordsAction(params: GetFinanceRecordsParams = 
       query.$or = [
         { billNumber: { $regex: cleanSearch, $options: "i" } },
         { reason: { $regex: cleanSearch, $options: "i" } },
+        { itemCode: { $regex: cleanSearch, $options: "i" } },
       ];
     }
 
@@ -97,8 +102,10 @@ export async function getFinanceRecordsAction(params: GetFinanceRecordsParams = 
 
     const [records, total] = await Promise.all([
       FinanceRecord.find(query)
-        .populate("shop", "name code")
+        .populate("shop", "name code shopType")
         .populate("category", "name type colorToken")
+        .populate("bankAccount", "bankName accountName accountNumber")
+        .populate("relatedBranch", "name code")
         .populate("createdBy", "name email")
         .populate("reviewedBy", "name email")
         .sort({ date: -1, createdAt: -1 })
@@ -197,22 +204,80 @@ export async function createFinanceRecordAction(formData: unknown) {
     }
 
     const recordDate = new Date(result.data.date);
+    const isCommShop = shop.shopType === "COMMUNICATION";
+    const isBranchRelated = Boolean(result.data.isRelatedToBranch);
+
+    // Business Rule for Communication Shop:
+    // Only branch-related transactions need verifier approval.
+    // Non-branch related communication retail sales are auto-approved immediately.
+    let recordStatus: "PENDING" | "APPROVED" = "PENDING";
+    let approvedAmount: number | null = null;
+    let isLocked = false;
+
+    if (isCommShop && !isBranchRelated) {
+      recordStatus = "APPROVED";
+      approvedAmount = result.data.amount;
+      isLocked = true;
+    }
+
+    const bankAccountId = result.data.bankAccount
+      ? new mongoose.Types.ObjectId(result.data.bankAccount)
+      : null;
+
+    const relatedBranchId = result.data.relatedBranch
+      ? new mongoose.Types.ObjectId(result.data.relatedBranch)
+      : null;
 
     const newRecord = await FinanceRecord.create({
       date: recordDate,
       shop: shop._id,
       category: category._id,
       paymentMethod: result.data.paymentMethod,
+      bankAccount: bankAccountId,
       billNumber: result.data.billNumber.trim(),
       reason: result.data.reason.trim(),
       amount: result.data.amount,
       type: result.data.type || category.type,
-      status: "PENDING",
-      approvedAmount: null,
+      status: recordStatus,
+      approvedAmount,
       runningBalance: 0,
-      isLocked: false,
+      isLocked,
+
+      // Communication fields
+      isCommunicationItem: Boolean(result.data.isCommunicationItem),
+      communicationItem: result.data.communicationItem ? new mongoose.Types.ObjectId(result.data.communicationItem) : null,
+      itemCode: result.data.itemCode ? result.data.itemCode.trim().toUpperCase() : null,
+      itemName: result.data.itemName ? result.data.itemName.trim() : null,
+      quantity: Number(result.data.quantity || 1),
+      actualPrice: Number(result.data.actualPrice || 0),
+      sellingPrice: Number(result.data.sellingPrice || 0),
+      discountPrice: Number(result.data.discountPrice || 0),
+      isRelatedToBranch: isBranchRelated,
+      relatedBranch: relatedBranchId,
+      relatedBranchNote: result.data.relatedBranchNote || "",
+
+      isDeleted: false,
       createdBy: new mongoose.Types.ObjectId(session.user.id),
     });
+
+    // If auto-approved, update Petty Cash or Bank Account immediately
+    if (recordStatus === "APPROVED") {
+      if (result.data.paymentMethod === "PETTY_CASH") {
+        const pettyCash = await PettyCashAccount.findOne();
+        if (pettyCash) {
+          if (newRecord.type === "EXPENSE") pettyCash.currentBalance -= result.data.amount;
+          else pettyCash.currentBalance += result.data.amount;
+          await pettyCash.save();
+        }
+      } else if (bankAccountId) {
+        const bank = await BankAccount.findById(bankAccountId);
+        if (bank) {
+          if (newRecord.type === "INCOME") bank.currentBalance += result.data.amount;
+          else bank.currentBalance -= result.data.amount;
+          await bank.save();
+        }
+      }
+    }
 
     // Recalculate shop sequential running balance
     await recalculateShopRunningBalance(shop._id, recordDate);
@@ -226,12 +291,16 @@ export async function createFinanceRecordAction(formData: unknown) {
         billNumber: newRecord.billNumber,
         amount: newRecord.amount,
         shop: shop.name,
+        paymentMethod: newRecord.paymentMethod,
+        autoApproved: recordStatus === "APPROVED",
       },
     });
 
     return {
       success: true,
-      message: "Finance record submitted successfully for verification",
+      message: recordStatus === "APPROVED"
+        ? "Transaction finalized successfully"
+        : "Finance record submitted successfully for verification",
       recordId: newRecord._id.toString(),
     };
   } catch (error) {
@@ -259,13 +328,13 @@ export async function updateFinanceRecordAction(formData: unknown) {
 
   try {
     await connectDB();
+
     const record = await FinanceRecord.findById(result.data.recordId);
-    if (!record) {
-      return { success: false, error: "Finance record not found." };
+    if (!record || record.isDeleted) {
+      return { success: false, error: "Record not found." };
     }
 
-    // Least Privilege rule check:
-    // Staff can ONLY edit if status === PENDING, not locked, and createdBy === user.id
+    // Staff can only edit PENDING records they created
     if (role === "STAFF") {
       if (record.createdBy.toString() !== session.user.id) {
         return { success: false, error: "You can only edit records you created." };
@@ -276,15 +345,19 @@ export async function updateFinanceRecordAction(formData: unknown) {
           error: "This record has already been reviewed and locked. Editing is restricted.",
         };
       }
+    } else if (role !== "ADMIN") {
+      return { success: false, error: "Finance Verifiers cannot edit records directly." };
     }
 
+    const previousAmount = record.amount;
     const previousDate = record.date;
-    const newDate = new Date(result.data.date);
-    const earliestDate = previousDate < newDate ? previousDate : newDate;
 
-    record.date = newDate;
+    record.date = new Date(result.data.date);
     record.category = new mongoose.Types.ObjectId(result.data.category);
     record.paymentMethod = result.data.paymentMethod;
+    if (result.data.bankAccount) {
+      record.bankAccount = new mongoose.Types.ObjectId(result.data.bankAccount);
+    }
     record.billNumber = result.data.billNumber.trim();
     record.reason = result.data.reason.trim();
     record.amount = result.data.amount;
@@ -292,8 +365,11 @@ export async function updateFinanceRecordAction(formData: unknown) {
 
     await record.save();
 
-    // Recalculate running balance from earliest affected date
-    await recalculateShopRunningBalance(record.shop, earliestDate);
+    // Recalculate running balance
+    if (record.shop) {
+      const earliestDate = previousDate < record.date ? previousDate : record.date;
+      await recalculateShopRunningBalance(record.shop, earliestDate);
+    }
 
     await logAuditEvent({
       actorId: session.user.id,
@@ -302,8 +378,8 @@ export async function updateFinanceRecordAction(formData: unknown) {
       targetId: record._id,
       metadata: {
         billNumber: record.billNumber,
-        amount: record.amount,
-        adminOverride: role === "ADMIN" && record.status !== "PENDING",
+        oldAmount: previousAmount,
+        newAmount: record.amount,
       },
     });
 
@@ -325,7 +401,7 @@ export async function deleteFinanceRecordAction(recordId: string, overrideReason
   try {
     await connectDB();
     const record = await FinanceRecord.findById(recordId);
-    if (!record) {
+    if (!record || record.isDeleted) {
       return { success: false, error: "Finance record not found." };
     }
 
@@ -346,15 +422,41 @@ export async function deleteFinanceRecordAction(recordId: string, overrideReason
 
     const shopId = record.shop;
     const recordDate = record.date;
+    const effectiveAmount = record.approvedAmount ?? record.amount;
 
-    await FinanceRecord.findByIdAndDelete(recordId);
+    record.isDeleted = true;
+    record.deletedAt = new Date();
+    record.deletedBy = new mongoose.Types.ObjectId(session.user.id);
+    record.deletionReason = overrideReason || "Deleted by user";
+    await record.save();
 
-    // Recalculate running balance after deletion
-    await recalculateShopRunningBalance(shopId, recordDate);
+    // Recalculate running balance after soft deletion
+    if (shopId) {
+      await recalculateShopRunningBalance(shopId, recordDate);
+    }
+
+    // If approved and was Petty cash or Bank, reverse impact
+    if (record.status === "APPROVED") {
+      if (record.paymentMethod === "PETTY_CASH") {
+        const pettyCash = await PettyCashAccount.findOne();
+        if (pettyCash) {
+          if (record.type === "EXPENSE") pettyCash.currentBalance += effectiveAmount;
+          else pettyCash.currentBalance -= effectiveAmount;
+          await pettyCash.save();
+        }
+      } else if (record.bankAccount) {
+        const bank = await BankAccount.findById(record.bankAccount);
+        if (bank) {
+          if (record.type === "INCOME") bank.currentBalance -= effectiveAmount;
+          else bank.currentBalance += effectiveAmount;
+          await bank.save();
+        }
+      }
+    }
 
     await logAuditEvent({
       actorId: session.user.id,
-      action: role === "ADMIN" && record.status !== "PENDING" ? "OVERRIDE_DELETE_RECORD" : "DELETE_RECORD",
+      action: "DELETE_RECORD",
       targetType: "FinanceRecord",
       targetId: record._id,
       metadata: {
@@ -397,7 +499,7 @@ export async function reviewFinanceRecordAction(formData: unknown) {
   try {
     await connectDB();
     const record = await FinanceRecord.findById(result.data.recordId);
-    if (!record) {
+    if (!record || record.isDeleted) {
       return { success: false, error: "Record not found." };
     }
 
@@ -424,8 +526,29 @@ export async function reviewFinanceRecordAction(formData: unknown) {
 
     await record.save();
 
+    // If Approved, update Petty Cash or Bank Account balances
+    if (isApprove && approvedAmount) {
+      if (record.paymentMethod === "PETTY_CASH") {
+        const pettyCash = await PettyCashAccount.findOne();
+        if (pettyCash) {
+          if (record.type === "EXPENSE") pettyCash.currentBalance -= approvedAmount;
+          else pettyCash.currentBalance += approvedAmount;
+          await pettyCash.save();
+        }
+      } else if (record.bankAccount) {
+        const bank = await BankAccount.findById(record.bankAccount);
+        if (bank) {
+          if (record.type === "INCOME") bank.currentBalance += approvedAmount;
+          else bank.currentBalance -= approvedAmount;
+          await bank.save();
+        }
+      }
+    }
+
     // Recalculate running balance from this record's date
-    await recalculateShopRunningBalance(record.shop, record.date);
+    if (record.shop) {
+      await recalculateShopRunningBalance(record.shop, record.date);
+    }
 
     await logAuditEvent({
       actorId: session.user.id,

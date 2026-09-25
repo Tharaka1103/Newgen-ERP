@@ -24,6 +24,13 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   AlertDialog,
   AlertDialogAction,
   AlertDialogCancel,
@@ -62,6 +69,7 @@ interface ShopItem {
   code: string;
   description?: string;
   address?: string;
+  shopType?: "STANDARD" | "COMMUNICATION";
   isActive: boolean;
   staffCount: number;
   recordsCount: number;
@@ -87,6 +95,7 @@ export function ShopsView({ initialShops }: { initialShops: ShopItem[] }) {
       code: "",
       description: "",
       address: "",
+      shopType: "STANDARD",
     },
   });
 
@@ -97,6 +106,7 @@ export function ShopsView({ initialShops }: { initialShops: ShopItem[] }) {
       code: "",
       description: "",
       address: "",
+      shopType: "STANDARD",
       isActive: true,
     },
   });
@@ -157,6 +167,7 @@ export function ShopsView({ initialShops }: { initialShops: ShopItem[] }) {
       code: shop.code,
       description: shop.description || "",
       address: shop.address || "",
+      shopType: shop.shopType || "STANDARD",
       isActive: shop.isActive,
     });
     setEditOpen(true);
@@ -196,13 +207,20 @@ export function ShopsView({ initialShops }: { initialShops: ShopItem[] }) {
       accessorKey: "name",
       header: "Branch / Shop Name",
       cell: ({ row }) => (
-        <div className="flex flex-col">
-          <Link
-            href={`/dashboard/admin/shops/${row.original._id}`}
-            className="font-semibold text-foreground text-xs hover:text-primary transition-colors cursor-pointer"
-          >
-            {row.original.name}
-          </Link>
+        <div className="flex flex-col gap-0.5">
+          <div className="flex items-center gap-1.5">
+            <Link
+              href={`/dashboard/admin/shops/${row.original._id}`}
+              className="font-semibold text-foreground text-xs hover:text-primary transition-colors cursor-pointer"
+            >
+              {row.original.name}
+            </Link>
+            {row.original.shopType === "COMMUNICATION" && (
+              <Badge variant="outline" className="text-[9px] px-1 py-0 font-mono bg-primary/10 text-primary border-primary/30">
+                COMMUNICATION
+              </Badge>
+            )}
+          </div>
           <span className="text-[11px] text-muted-foreground truncate max-w-xs">
             {row.original.address || "No address specified"}
           </span>
@@ -338,6 +356,22 @@ export function ShopsView({ initialShops }: { initialShops: ShopItem[] }) {
             </div>
 
             <div className="space-y-1.5">
+              <label className="text-xs font-semibold uppercase text-muted-foreground">Branch Type</label>
+              <Select
+                value={createForm.watch("shopType") || "STANDARD"}
+                onValueChange={(val: any) => createForm.setValue("shopType", val)}
+              >
+                <SelectTrigger className="h-9 text-xs">
+                  <SelectValue placeholder="Select Branch Type" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="STANDARD">Standard Educational Branch</SelectItem>
+                  <SelectItem value="COMMUNICATION">Communication & Retail Shop</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-1.5">
               <label className="text-xs font-semibold uppercase text-muted-foreground">Physical Address</label>
               <Input placeholder="Street, City, Postal Code" {...createForm.register("address")} className="h-9 text-xs" />
             </div>
@@ -377,6 +411,22 @@ export function ShopsView({ initialShops }: { initialShops: ShopItem[] }) {
             <div className="space-y-1.5">
               <label className="text-xs font-semibold uppercase text-muted-foreground">Branch Code</label>
               <Input placeholder="Code" {...editForm.register("code")} className="h-9 text-xs font-mono uppercase" />
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold uppercase text-muted-foreground">Branch Type</label>
+              <Select
+                value={editForm.watch("shopType") || "STANDARD"}
+                onValueChange={(val: any) => editForm.setValue("shopType", val)}
+              >
+                <SelectTrigger className="h-9 text-xs">
+                  <SelectValue placeholder="Select Branch Type" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="STANDARD">Standard Educational Branch</SelectItem>
+                  <SelectItem value="COMMUNICATION">Communication & Retail Shop</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
 
             <div className="space-y-1.5">

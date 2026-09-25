@@ -30,6 +30,9 @@ import {
   SettingsIcon,
   LandmarkIcon,
   LogOutIcon,
+  WalletIcon,
+  HistoryIcon,
+  ArrowLeftRightIcon,
 } from "lucide-react";
 
 interface AppSidebarProps {
@@ -48,10 +51,14 @@ export function AppSidebar({ user }: AppSidebarProps) {
 
   const adminNav = [
     { title: "Dashboard", href: "/dashboard/admin/dashboard", icon: LayoutDashboardIcon },
+    { title: "All Transactions", href: "/dashboard/admin/transactions", icon: ArrowLeftRightIcon },
+    { title: "Petty Cash", href: "/dashboard/admin/petty-cash", icon: WalletIcon },
+    { title: "Bank Accounts", href: "/dashboard/admin/bank-accounts", icon: LandmarkIcon },
     { title: "Summary & Reports", href: "/dashboard/admin/summary", icon: BarChart3Icon },
-    { title: "User Management", href: "/dashboard/admin/users", icon: UsersIcon },
-    { title: "Categories", href: "/dashboard/admin/categories", icon: TagsIcon },
     { title: "Branches / Shops", href: "/dashboard/admin/shops", icon: Building2Icon },
+    { title: "Categories", href: "/dashboard/admin/categories", icon: TagsIcon },
+    { title: "User Management", href: "/dashboard/admin/users", icon: UsersIcon },
+    { title: "Audit Trail", href: "/dashboard/admin/audit", icon: HistoryIcon },
     { title: "My Settings", href: "/dashboard/admin/settings", icon: SettingsIcon },
   ];
 
@@ -141,6 +148,7 @@ export function AppSidebar({ user }: AppSidebarProps) {
                 height={1190}
                 loading="lazy"
                 decoding="async"
+                unoptimized
                 className="h-full w-full object-contain transition-transform duration-300"
               />
             </div>
@@ -165,7 +173,7 @@ export function AppSidebar({ user }: AppSidebarProps) {
 
         {/* Version Number (positioned above the logout button) */}
         <div className="flex items-center justify-between text-[11px] text-muted-foreground px-1">
-          <span>v1.0.0</span>
+          <span>v1.2.0</span>
           <span className="flex items-center gap-1.5">
             <span className="size-1.5 rounded-full bg-chart-2 animate-pulse" />
             <span className="text-[10px]">Online</span>

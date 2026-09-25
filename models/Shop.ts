@@ -6,6 +6,7 @@ export interface IShop extends Document {
   code: string;
   description?: string;
   address?: string;
+  shopType: "STANDARD" | "COMMUNICATION";
   isActive: boolean;
   createdBy?: mongoose.Types.ObjectId | null;
   createdAt: Date;
@@ -35,6 +36,12 @@ const ShopSchema = new Schema<IShop>(
     address: {
       type: String,
       default: "",
+    },
+    shopType: {
+      type: String,
+      enum: ["STANDARD", "COMMUNICATION"],
+      default: "STANDARD",
+      index: true,
     },
     isActive: {
       type: Boolean,

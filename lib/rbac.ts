@@ -15,16 +15,28 @@ export const ROLES = {
   ADMIN: "ADMIN" as const,
 };
 
-export function isAdmin(role?: string | null): boolean {
-  return role === ROLES.ADMIN;
+export function isAdmin(userOrRole?: SessionUser | { role?: string | null } | string | null): boolean {
+  if (!userOrRole) return false;
+  if (typeof userOrRole === "string") {
+    return userOrRole === ROLES.ADMIN;
+  }
+  return (userOrRole as { role?: string | null }).role === ROLES.ADMIN;
 }
 
-export function isVerifier(role?: string | null): boolean {
-  return role === ROLES.VERIFIER;
+export function isVerifier(userOrRole?: SessionUser | { role?: string | null } | string | null): boolean {
+  if (!userOrRole) return false;
+  if (typeof userOrRole === "string") {
+    return userOrRole === ROLES.VERIFIER;
+  }
+  return (userOrRole as { role?: string | null }).role === ROLES.VERIFIER;
 }
 
-export function isStaff(role?: string | null): boolean {
-  return role === ROLES.STAFF;
+export function isStaff(userOrRole?: SessionUser | { role?: string | null } | string | null): boolean {
+  if (!userOrRole) return false;
+  if (typeof userOrRole === "string") {
+    return userOrRole === ROLES.STAFF;
+  }
+  return (userOrRole as { role?: string | null }).role === ROLES.STAFF;
 }
 
 export function canCreateFinanceRecord(user?: SessionUser | null): boolean {

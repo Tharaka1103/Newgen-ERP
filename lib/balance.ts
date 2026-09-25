@@ -7,6 +7,7 @@ import mongoose from "mongoose";
  * Triggers upon create/update/delete/approval of records.
  *
  * Algorithm:
+ * - Filter out soft-deleted records (isDeleted !== true).
  * - Sort records by date ascending, then createdAt ascending.
  * - For REJECTED records: net impact is 0.
  * - For APPROVED records: net impact uses approvedAmount ?? amount.
@@ -22,10 +23,11 @@ export async function recalculateShopRunningBalance(
 
   let initialBalance = 0;
 
-  // If a startDate is specified, find the running balance of the record immediately preceding startDate
+  // If a startDate is specified, find the running balance of the active record immediately preceding startDate
   if (startDate) {
     const previousRecord = await FinanceRecord.findOne({
       shop: shopObjId,
+      isDeleted: { $ne: true },
       $or: [
         { date: { $lt: startDate } },
         { date: startDate, createdAt: { $lt: new Date() } },
@@ -40,7 +42,11 @@ export async function recalculateShopRunningBalance(
     }
   }
 
-  const query: Record<string, unknown> = { shop: shopObjId };
+  const query: Record<string, unknown> = {
+    shop: shopObjId,
+    isDeleted: { $ne: true },
+  };
+
   if (startDate) {
     query.date = { $gte: startDate };
   }
@@ -56,7 +62,6 @@ export async function recalculateShopRunningBalance(
 
   for (const record of records) {
     if (record.status === "REJECTED") {
-      // Rejected transactions have zero impact on the cash ledger balance
       bulkOps.push({
         updateOne: {
           filter: { _id: record._id },

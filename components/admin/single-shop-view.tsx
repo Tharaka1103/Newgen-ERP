@@ -4,15 +4,38 @@ import * as React from "react";
 import Link from "next/link";
 import { getSummaryAnalyticsAction } from "@/actions/reports";
 import { getShopDetailsAction } from "@/actions/shops";
+import {
+  getCommunicationItemsAction,
+  createCommunicationItemAction,
+  updateCommunicationItemAction,
+  deleteCommunicationItemAction,
+  getCommunicationAnalyticsAction,
+} from "@/actions/communication";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { CategoryBadge } from "@/components/shared/category-badge";
 import { DataTable } from "@/components/shared/data-table";
 import { ColumnDef } from "@tanstack/react-table";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   ChartContainer,
   ChartTooltip,
@@ -35,19 +58,25 @@ import {
   Building2Icon,
   UsersIcon,
   MapPinIcon,
-  TrendingDownIcon,
-  TrendingUpIcon,
-  ClockIcon,
-  CheckCircle2Icon,
   ReceiptIcon,
-  PhoneIcon,
-  MailIcon,
-  CalendarIcon,
-  WalletIcon,
+  PackageIcon,
+  PlusCircleIcon,
+  EditIcon,
+  Trash2Icon,
   DollarSignIcon,
-  CheckCheckIcon,
+  TrendingUpIcon,
+  SparklesIcon,
+  Loader2Icon,
 } from "lucide-react";
 import { toast } from "@/components/ui/toast";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import {
+  createCommunicationItemSchema,
+  updateCommunicationItemSchema,
+  CreateCommunicationItemInput,
+  UpdateCommunicationItemInput,
+} from "@/schemas/communication";
 
 interface AssignedStaff {
   _id: string;
@@ -65,6 +94,7 @@ interface SingleShopViewProps {
     code: string;
     description?: string;
     address?: string;
+    shopType?: "STANDARD" | "COMMUNICATION";
     isActive: boolean;
   };
   initialStaff: AssignedStaff[];
@@ -81,15 +111,70 @@ export function SingleShopView({
   initialStaff,
   initialStats,
 }: SingleShopViewProps) {
+  const isCommunication = initialShop.shopType === "COMMUNICATION";
+
+  const [activeTab, setActiveTab] = React.useState<"overview" | "items" | "staff">("overview");
   const [period, setPeriod] = React.useState<"today" | "week" | "month" | "year" | "custom">("month");
   const [startDate, setStartDate] = React.useState<string>("");
   const [endDate, setEndDate] = React.useState<string>("");
+  const [itemFilter, setItemFilter] = React.useState<string>("ALL");
   const [loading, setLoading] = React.useState<boolean>(false);
 
   const [shop, setShop] = React.useState(initialShop);
   const [staff, setStaff] = React.useState<AssignedStaff[]>(initialStaff);
   const [stats, setStats] = React.useState(initialStats);
 
+  // Communication Items State
+  const [commItems, setCommItems] = React.useState<any[]>([]);
+  const [commAnalytics, setCommAnalytics] = React.useState<{
+    totalRevenue: number;
+    totalCost: number;
+    netProfit: number;
+    totalTransactions: number;
+    branchRelatedCount: number;
+    nonBranchCount: number;
+    records: any[];
+    itemBreakdown: any[];
+  }>({
+    totalRevenue: 0,
+    totalCost: 0,
+    netProfit: 0,
+    totalTransactions: 0,
+    branchRelatedCount: 0,
+    nonBranchCount: 0,
+    records: [],
+    itemBreakdown: [],
+  });
+
+  // Modals for Communication Items
+  const [addItemOpen, setAddItemOpen] = React.useState(false);
+  const [editItemOpen, setEditItemOpen] = React.useState(false);
+  const [selectedItem, setSelectedItem] = React.useState<any | null>(null);
+
+  const createItemForm = useForm<CreateCommunicationItemInput>({
+    resolver: zodResolver(createCommunicationItemSchema),
+    defaultValues: {
+      shopId: initialShop._id,
+      itemCode: "",
+      name: "",
+      actualPrice: 0,
+      description: "",
+    },
+  });
+
+  const editItemForm = useForm<UpdateCommunicationItemInput>({
+    resolver: zodResolver(updateCommunicationItemSchema),
+    defaultValues: {
+      itemId: "",
+      itemCode: "",
+      name: "",
+      actualPrice: 0,
+      description: "",
+      isActive: true,
+    },
+  });
+
+  // Standard Analytics State
   const [analytics, setAnalytics] = React.useState<{
     kpis: {
       totalTransactions: number;
@@ -147,6 +232,34 @@ export function SingleShopView({
           setStats(shopRes.stats);
         }
       }
+
+      // If communication, also fetch items & communication analytics
+      if (isCommunication) {
+        const [itemsRes, commAnalyticsRes] = await Promise.all([
+          getCommunicationItemsAction(shop._id),
+          getCommunicationAnalyticsAction({
+            shopId: shop._id,
+            period,
+            startDate: period === "custom" ? startDate : undefined,
+            endDate: period === "custom" ? endDate : undefined,
+            itemCodeFilter: itemFilter,
+          }),
+        ]);
+
+        if (itemsRes.success) setCommItems(itemsRes.items || []);
+        if (commAnalyticsRes.success) {
+          setCommAnalytics({
+            totalRevenue: commAnalyticsRes.totalRevenue || 0,
+            totalCost: commAnalyticsRes.totalCost || 0,
+            netProfit: commAnalyticsRes.netProfit || 0,
+            totalTransactions: commAnalyticsRes.totalTransactions || 0,
+            branchRelatedCount: commAnalyticsRes.branchRelatedCount || 0,
+            nonBranchCount: commAnalyticsRes.nonBranchCount || 0,
+            records: commAnalyticsRes.records || [],
+            itemBreakdown: commAnalyticsRes.itemBreakdown || [],
+          });
+        }
+      }
     } catch (err) {
       console.error("Failed to load shop analytics:", err);
       toast.create({
@@ -157,15 +270,79 @@ export function SingleShopView({
     } finally {
       setLoading(false);
     }
-  }, [period, startDate, endDate, shop._id]);
+  }, [period, startDate, endDate, itemFilter, shop._id, isCommunication]);
 
   React.useEffect(() => {
     fetchShopData();
   }, [fetchShopData]);
 
-  // Export to CSV Function
+  // Item Management Handlers
+  const onAddItem = async (data: CreateCommunicationItemInput) => {
+    try {
+      const res = await createCommunicationItemAction(data);
+      if (res.success) {
+        toast.create({
+          title: "Item Registered",
+          description: `Item "${data.itemCode}" added to inventory successfully.`,
+          type: "success",
+        });
+        setAddItemOpen(false);
+        createItemForm.reset();
+        fetchShopData();
+      } else {
+        toast.create({
+          title: "Failed to Add Item",
+          description: res.error || "An error occurred",
+          type: "error",
+        });
+      }
+    } catch {
+      toast.create({ title: "Error", description: "Unexpected error", type: "error" });
+    }
+  };
+
+  const onEditItem = async (data: UpdateCommunicationItemInput) => {
+    try {
+      const res = await updateCommunicationItemAction(data);
+      if (res.success) {
+        toast.create({
+          title: "Item Updated",
+          description: "Item changes saved successfully.",
+          type: "success",
+        });
+        setEditItemOpen(false);
+        fetchShopData();
+      } else {
+        toast.create({
+          title: "Failed to Update",
+          description: res.error || "An error occurred",
+          type: "error",
+        });
+      }
+    } catch {
+      toast.create({ title: "Error", description: "Unexpected error", type: "error" });
+    }
+  };
+
+  const onDeleteItem = async (itemId: string) => {
+    if (!confirm("Are you sure you want to delete this inventory item?")) return;
+    try {
+      const res = await deleteCommunicationItemAction(itemId);
+      if (res.success) {
+        toast.create({ title: "Item Deleted", description: "Item removed from inventory.", type: "success" });
+        fetchShopData();
+      } else {
+        toast.create({ title: "Delete Failed", description: res.error || "An error occurred", type: "error" });
+      }
+    } catch {
+      toast.create({ title: "Error", description: "Unexpected error", type: "error" });
+    }
+  };
+
+  // Export CSV Function
   const exportCSV = () => {
-    if (!analytics.records.length) {
+    const recordsToExport = isCommunication ? commAnalytics.records : analytics.records;
+    if (!recordsToExport.length) {
       toast.create({
         title: "No records to export",
         description: "There is no ledger data matching the active filters for this branch.",
@@ -174,73 +351,90 @@ export function SingleShopView({
       return;
     }
 
-    const headers = [
-      "Date",
-      "Branch",
-      "Bill Number",
-      "Payment Method",
-      "Category",
-      "Type",
-      "Reason",
-      "Submitted Amount",
-      "Status",
-      "Approved Amount",
-      "Running Balance",
-    ];
+    if (isCommunication) {
+      const headers = [
+        "Date",
+        "Bill Number",
+        "Item Code",
+        "Item Name",
+        "Actual Cost (LKR)",
+        "Selling Price (LKR)",
+        "Discount (LKR)",
+        "Net Amount (LKR)",
+        "Branch Related",
+        "Target Branch",
+        "Status",
+      ];
 
-    const rows = analytics.records.map((r) => [
-      `"${new Date(r.date).toISOString().split("T")[0]}"`,
-      `"${shop.name}"`,
-      `"${r.billNumber || ""}"`,
-      `"${r.paymentMethod || ""}"`,
-      `"${r.category?.name || ""}"`,
-      `"${r.type || ""}"`,
-      `"${(r.reason || "").replace(/"/g, '""')}"`,
-      r.amount,
-      `"${r.status}"`,
-      r.approvedAmount ?? "",
-      r.runningBalance ?? "",
-    ]);
+      const rows = recordsToExport.map((r) => [
+        `"${new Date(r.date).toISOString().split("T")[0]}"`,
+        `"${r.billNumber || ""}"`,
+        `"${r.itemCode || "UNLISTED"}"`,
+        `"${(r.itemName || r.reason || "").replace(/"/g, '""')}"`,
+        r.actualPrice || 0,
+        r.sellingPrice || 0,
+        r.discountPrice || 0,
+        r.approvedAmount ?? r.amount,
+        r.isRelatedToBranch ? "YES" : "NO",
+        `"${r.relatedBranch?.name || ""}"`,
+        `"${r.status}"`,
+      ]);
 
-    const csvContent =
-      "data:text/csv;charset=utf-8," +
-      [headers.join(","), ...rows.map((e) => e.join(","))].join("\n");
+      const csvContent = "data:text/csv;charset=utf-8," + [headers.join(","), ...rows.map((e) => e.join(","))].join("\n");
+      const encodedUri = encodeURI(csvContent);
+      const link = document.createElement("a");
+      link.setAttribute("href", encodedUri);
+      link.setAttribute("download", `${shop.code}_Communication_${period}_${new Date().toISOString().split("T")[0]}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } else {
+      const headers = ["Date", "Branch", "Bill Number", "Payment Method", "Category", "Type", "Reason", "Submitted Amount", "Status", "Approved Amount", "Running Balance"];
+      const rows = recordsToExport.map((r) => [
+        `"${new Date(r.date).toISOString().split("T")[0]}"`,
+        `"${shop.name}"`,
+        `"${r.billNumber || ""}"`,
+        `"${r.paymentMethod || ""}"`,
+        `"${r.category?.name || ""}"`,
+        `"${r.type || ""}"`,
+        `"${(r.reason || "").replace(/"/g, '""')}"`,
+        r.amount,
+        `"${r.status}"`,
+        r.approvedAmount ?? "",
+        r.runningBalance ?? "",
+      ]);
 
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement("a");
-    link.setAttribute("href", encodedUri);
-    link.setAttribute(
-      "download",
-      `${shop.code}_Financial_Summary_${period}_${new Date().toISOString().split("T")[0]}.csv`
-    );
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+      const csvContent = "data:text/csv;charset=utf-8," + [headers.join(","), ...rows.map((e) => e.join(","))].join("\n");
+      const encodedUri = encodeURI(csvContent);
+      const link = document.createElement("a");
+      link.setAttribute("href", encodedUri);
+      link.setAttribute("download", `${shop.code}_Financial_Summary_${period}_${new Date().toISOString().split("T")[0]}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    }
 
     toast.create({
       title: "Export complete",
-      description: `Downloaded ${analytics.records.length} records for ${shop.name} in CSV format.`,
+      description: `Downloaded ${recordsToExport.length} records for ${shop.name} in CSV format.`,
       type: "success",
     });
   };
 
-  // Table Columns
-  const columns: ColumnDef<any>[] = [
+  // Table Columns for Standard Branch
+  const standardColumns: ColumnDef<any>[] = [
     {
       accessorKey: "date",
       header: "Date",
-      cell: ({ row }) => {
-        const d = new Date(row.original.date);
-        return <span className="font-mono text-xs">{d.toLocaleDateString()}</span>;
-      },
+      cell: ({ row }) => (
+        <span className="font-mono text-xs">{new Date(row.original.date).toLocaleDateString()}</span>
+      ),
     },
     {
       accessorKey: "billNumber",
       header: "Bill No",
       cell: ({ row }) => (
-        <span className="font-mono text-xs font-semibold text-primary">
-          {row.original.billNumber}
-        </span>
+        <span className="font-mono text-xs font-semibold text-primary">{row.original.billNumber}</span>
       ),
     },
     {
@@ -248,10 +442,7 @@ export function SingleShopView({
       header: "Category",
       cell: ({ row }) => (
         <div className="max-w-[180px] min-w-0">
-          <CategoryBadge
-            name={row.original.category?.name || "Uncategorized"}
-            colorToken={row.original.category?.colorToken}
-          />
+          <CategoryBadge name={row.original.category?.name || "Uncategorized"} colorToken={row.original.category?.colorToken} />
         </div>
       ),
     },
@@ -259,18 +450,14 @@ export function SingleShopView({
       accessorKey: "paymentMethod",
       header: "Method",
       cell: ({ row }) => (
-        <span className="text-xs uppercase font-mono text-muted-foreground">
-          {row.original.paymentMethod}
-        </span>
+        <span className="text-xs uppercase font-mono text-muted-foreground">{row.original.paymentMethod}</span>
       ),
     },
     {
       accessorKey: "reason",
       header: "Reason / Notes",
       cell: ({ row }) => (
-        <span className="truncate max-w-[200px] text-xs block text-muted-foreground">
-          {row.original.reason}
-        </span>
+        <span className="truncate max-w-[200px] text-xs block text-muted-foreground">{row.original.reason}</span>
       ),
     },
     {
@@ -290,45 +477,165 @@ export function SingleShopView({
       header: "Status",
       cell: ({ row }) => <StatusBadge status={row.original.status} />,
     },
+  ];
+
+  // Table Columns for Communication Shop Overview
+  const commColumns: ColumnDef<any>[] = [
     {
-      accessorKey: "runningBalance",
-      header: "Balance (LKR)",
+      accessorKey: "date",
+      header: "Date",
+      cell: ({ row }) => (
+        <span className="font-mono text-xs">{new Date(row.original.date).toLocaleDateString()}</span>
+      ),
+    },
+    {
+      accessorKey: "billNumber",
+      header: "Bill No",
+      cell: ({ row }) => (
+        <span className="font-mono text-xs font-semibold text-primary">{row.original.billNumber}</span>
+      ),
+    },
+    {
+      accessorKey: "itemCode",
+      header: "Item Code",
+      cell: ({ row }) => (
+        <span className="font-mono text-xs font-semibold bg-muted px-2 py-0.5 rounded border border-border">
+          {row.original.itemCode || "UNLISTED"}
+        </span>
+      ),
+    },
+    {
+      accessorKey: "itemName",
+      header: "Item Name / Notes",
+      cell: ({ row }) => (
+        <span className="text-xs text-foreground font-medium truncate max-w-xs block">
+          {row.original.itemName || row.original.reason}
+        </span>
+      ),
+    },
+    {
+      accessorKey: "actualPrice",
+      header: "Cost (LKR)",
+      cell: ({ row }) => (
+        <span className="font-mono text-xs text-muted-foreground">
+          LKR {Number(row.original.actualPrice || 0).toLocaleString()}
+        </span>
+      ),
+    },
+    {
+      accessorKey: "amount",
+      header: "Net Sales (LKR)",
+      cell: ({ row }) => (
+        <span className="font-mono text-xs font-semibold text-chart-2">
+          LKR {Number(row.original.approvedAmount ?? row.original.amount).toLocaleString()}
+        </span>
+      ),
+    },
+    {
+      accessorKey: "isRelatedToBranch",
+      header: "Branch Link",
+      cell: ({ row }) => (
+        row.original.isRelatedToBranch ? (
+          <Badge variant="outline" className="text-[10px] border-primary/40 bg-primary/10 text-primary">
+            {row.original.relatedBranch?.name || "Branch Linked"}
+          </Badge>
+        ) : (
+          <span className="text-[11px] text-muted-foreground">Direct Retail</span>
+        )
+      ),
+    },
+    {
+      accessorKey: "status",
+      header: "Status",
+      cell: ({ row }) => <StatusBadge status={row.original.status} />,
+    },
+  ];
+
+  // Table Columns for Inventory Items
+  const itemColumns: ColumnDef<any>[] = [
+    {
+      accessorKey: "itemCode",
+      header: "Item Code",
+      cell: ({ row }) => (
+        <span className="font-mono text-xs font-bold uppercase rounded-md bg-muted px-2 py-0.5 border border-border">
+          {row.original.itemCode}
+        </span>
+      ),
+    },
+    {
+      accessorKey: "name",
+      header: "Item Name",
+      cell: ({ row }) => (
+        <div className="flex flex-col">
+          <span className="font-semibold text-xs text-foreground">{row.original.name}</span>
+          {row.original.description && (
+            <span className="text-[11px] text-muted-foreground truncate max-w-xs">{row.original.description}</span>
+          )}
+        </div>
+      ),
+    },
+    {
+      accessorKey: "actualPrice",
+      header: "Unit Cost Price (LKR)",
+      cell: ({ row }) => (
+        <span className="font-mono text-xs font-semibold text-foreground">
+          LKR {Number(row.original.actualPrice).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+        </span>
+      ),
+    },
+    {
+      accessorKey: "isActive",
+      header: "Status",
+      cell: ({ row }) => (
+        <Badge variant={row.original.isActive ? "outline" : "destructive"} className="text-[10px]">
+          {row.original.isActive ? "Active" : "Disabled"}
+        </Badge>
+      ),
+    },
+    {
+      id: "actions",
+      header: "Actions",
       cell: ({ row }) => {
-        const bal = row.original.runningBalance || 0;
+        const item = row.original;
         return (
-          <span className={`font-mono text-xs font-semibold ${bal >= 0 ? "text-chart-2" : "text-destructive"}`}>
-            {Number(bal).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-          </span>
+          <div className="flex items-center gap-1">
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              onClick={() => {
+                setSelectedItem(item);
+                editItemForm.reset({
+                  itemId: item._id,
+                  itemCode: item.itemCode,
+                  name: item.name,
+                  actualPrice: item.actualPrice,
+                  description: item.description || "",
+                  isActive: item.isActive,
+                });
+                setEditItemOpen(true);
+              }}
+              title="Edit Item"
+            >
+              <EditIcon className="size-3.5" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              onClick={() => onDeleteItem(item._id)}
+              className="text-destructive hover:text-destructive"
+              title="Delete Item"
+            >
+              <Trash2Icon className="size-3.5" />
+            </Button>
+          </div>
         );
       },
     },
   ];
 
-  const lineChartConfig: ChartConfig = {
-    income: {
-      label: "Inflows (Income)",
-      color: "var(--chart-2)",
-    },
-    expense: {
-      label: "Outflows (Expense)",
-      color: "var(--chart-1)",
-    },
-  };
-
-  const barChartConfig: ChartConfig = {
-    income: {
-      label: "Inflows",
-      color: "var(--chart-2)",
-    },
-    expense: {
-      label: "Outflows",
-      color: "var(--chart-1)",
-    },
-  };
-
   return (
     <div className="space-y-6">
-      {/* Top Navigation & Shop Profile Header */}
+      {/* Top Header */}
       <div className="flex flex-col gap-4">
         <div>
           <Button
@@ -352,16 +659,23 @@ export function SingleShopView({
                 <h1 className="text-xl font-bold text-foreground tracking-tight truncate">
                   {shop.name}
                 </h1>
+                {isCommunication ? (
+                  <Badge variant="outline" className="text-[10px] bg-primary/10 text-primary border-primary/40 font-mono">
+                    COMMUNICATION SHOP
+                  </Badge>
+                ) : (
+                  <Badge variant="outline" className="text-[10px]">
+                    STANDARD BRANCH
+                  </Badge>
+                )}
                 <Badge
                   variant={shop.isActive ? "outline" : "destructive"}
                   className={`text-[10px] ${shop.isActive ? "border-chart-2/40 bg-chart-2/15 text-foreground" : ""}`}
                 >
                   {shop.isActive ? "Operational" : "Closed"}
                 </Badge>
-                <span className="font-mono text-xs text-muted-foreground rounded bg-muted px-2 py-0.5 border border-border">
-                  Code: {shop.code}
-                </span>
               </div>
+
               <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
                 <span className="flex items-center gap-1">
                   <MapPinIcon className="size-3.5" />
@@ -371,440 +685,507 @@ export function SingleShopView({
                   <UsersIcon className="size-3.5" />
                   {staff.length} Officer{staff.length !== 1 ? "s" : ""} Assigned
                 </span>
-                <span className="flex items-center gap-1">
-                  <ReceiptIcon className="size-3.5" />
-                  {stats.recordsCount} Total Lifetime Entries
-                </span>
+                {isCommunication && (
+                  <span className="flex items-center gap-1">
+                    <PackageIcon className="size-3.5 text-primary" />
+                    {commItems.length} Registered Inventory Item{commItems.length !== 1 ? "s" : ""}
+                  </span>
+                )}
               </div>
-              {shop.description && (
-                <p className="text-xs text-muted-foreground pt-0.5 line-clamp-1">
-                  {shop.description}
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0">
+            {isCommunication && (
+              <Button
+                onClick={() => {
+                  createItemForm.reset({
+                    shopId: shop._id,
+                    itemCode: "",
+                    name: "",
+                    actualPrice: 0,
+                    description: "",
+                  });
+                  setAddItemOpen(true);
+                }}
+                size="sm"
+                className="gap-1.5 text-xs"
+              >
+                <PlusCircleIcon className="size-3.5" />
+                Add Item
+              </Button>
+            )}
+
+            <div className="flex flex-col sm:items-end justify-center pl-3 border-l border-border">
+              <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
+                Branch Balance
+              </div>
+              <div className={`text-xl font-bold font-mono ${stats.currentBalance >= 0 ? "text-chart-2" : "text-destructive"}`}>
+                LKR {Number(stats.currentBalance || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Main Tabs Container */}
+      <Tabs value={activeTab} onValueChange={(val: any) => setActiveTab(val)} className="space-y-6">
+        <div className="flex items-center justify-between border-b border-border pb-2">
+          <TabsList className="bg-muted">
+            <TabsTrigger value="overview" className="text-xs">
+              Overview & Analytics
+            </TabsTrigger>
+            {isCommunication && (
+              <TabsTrigger value="items" className="text-xs">
+                Items & Inventory ({commItems.length})
+              </TabsTrigger>
+            )}
+            <TabsTrigger value="staff" className="text-xs">
+              Assigned Officers ({staff.length})
+            </TabsTrigger>
+          </TabsList>
+        </div>
+
+        {/* OVERVIEW TAB CONTENT */}
+        <TabsContent value="overview" className="space-y-6 mt-0">
+          {/* Filter & Period Selector Bar */}
+          <div className="flex flex-col gap-4 rounded-xl border border-border bg-card p-4 shadow-sm md:flex-row md:items-center md:justify-between">
+            <div className="flex flex-wrap items-center gap-3">
+              <Tabs value={period} onValueChange={(val: any) => setPeriod(val)} className="w-auto">
+                <TabsList className="bg-muted">
+                  <TabsTrigger value="today" className="text-xs">Day (Today)</TabsTrigger>
+                  <TabsTrigger value="week" className="text-xs">Week</TabsTrigger>
+                  <TabsTrigger value="month" className="text-xs">Month</TabsTrigger>
+                  <TabsTrigger value="year" className="text-xs">Year</TabsTrigger>
+                  <TabsTrigger value="custom" className="text-xs">Custom Range</TabsTrigger>
+                </TabsList>
+              </Tabs>
+
+              {isCommunication && (
+                <Select value={itemFilter} onValueChange={(val) => setItemFilter(val || "ALL")}>
+                  <SelectTrigger className="h-9 w-44 text-xs">
+                    <SelectValue placeholder="All Items" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="ALL">All Items</SelectItem>
+                    {commItems.map((item) => (
+                      <SelectItem key={item._id} value={item.itemCode}>
+                        {item.itemCode} - {item.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+
+              {period === "custom" && (
+                <div className="flex items-center gap-2">
+                  <Input
+                    type="date"
+                    value={startDate}
+                    onChange={(e) => setStartDate(e.target.value)}
+                    className="h-9 w-36 text-xs"
+                  />
+                  <span className="text-xs text-muted-foreground">to</span>
+                  <Input
+                    type="date"
+                    value={endDate}
+                    onChange={(e) => setEndDate(e.target.value)}
+                    className="h-9 w-36 text-xs"
+                  />
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={fetchShopData}
+                disabled={loading}
+                className="gap-1.5 text-xs"
+              >
+                <RefreshCwIcon className={`size-3.5 ${loading ? "animate-spin" : ""}`} />
+                Refresh
+              </Button>
+              <Button
+                variant="default"
+                size="sm"
+                onClick={exportCSV}
+                className="gap-1.5 text-xs"
+              >
+                <DownloadIcon className="size-3.5" />
+                Export CSV Report
+              </Button>
+            </div>
+          </div>
+
+          {/* KPI Cards (Communication vs Standard) */}
+          {isCommunication ? (
+            <div className="grid gap-3 grid-cols-2 sm:grid-cols-3 lg:grid-cols-6">
+              <Card className="border-border bg-card p-3.5 shadow-sm">
+                <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
+                  Total Sales Revenue
+                </div>
+                <div className="text-xl font-bold font-mono mt-1 text-chart-2">
+                  LKR {commAnalytics.totalRevenue.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                </div>
+                <div className="text-[10px] text-muted-foreground mt-0.5">Customer payments</div>
+              </Card>
+
+              <Card className="border-border bg-card p-3.5 shadow-sm">
+                <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
+                  Total Cost (Actual)
+                </div>
+                <div className="text-xl font-bold font-mono mt-1 text-foreground">
+                  LKR {commAnalytics.totalCost.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                </div>
+                <div className="text-[10px] text-muted-foreground mt-0.5">Procurement / stock cost</div>
+              </Card>
+
+              <Card className="border-border bg-card p-3.5 shadow-sm">
+                <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
+                  Net Profit Margin
+                </div>
+                <div className={`text-xl font-bold font-mono mt-1 ${commAnalytics.netProfit >= 0 ? "text-chart-2" : "text-destructive"}`}>
+                  LKR {commAnalytics.netProfit.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                </div>
+                <div className="text-[10px] text-muted-foreground mt-0.5">Revenue minus actual cost</div>
+              </Card>
+
+              <Card className="border-border bg-card p-3.5 shadow-sm">
+                <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
+                  Total Transactions
+                </div>
+                <div className="text-xl font-bold font-mono mt-1 text-foreground">
+                  {commAnalytics.totalTransactions}
+                </div>
+                <div className="text-[10px] text-muted-foreground mt-0.5">Recorded items in period</div>
+              </Card>
+
+              <Card className="border-border bg-card p-3.5 shadow-sm">
+                <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
+                  Direct Retail Sales
+                </div>
+                <div className="text-xl font-bold font-mono mt-1 text-chart-2">
+                  {commAnalytics.nonBranchCount}
+                </div>
+                <div className="text-[10px] text-muted-foreground mt-0.5">Auto-approved walk-in sales</div>
+              </Card>
+
+              <Card className="border-border bg-card p-3.5 shadow-sm">
+                <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
+                  Branch Related Sales
+                </div>
+                <div className="text-xl font-bold font-mono mt-1 text-primary">
+                  {commAnalytics.branchRelatedCount}
+                </div>
+                <div className="text-[10px] text-muted-foreground mt-0.5">Cross-campus verification</div>
+              </Card>
+            </div>
+          ) : (
+            <div className="grid gap-3 grid-cols-2 sm:grid-cols-4 lg:grid-cols-4">
+              <Card className="border-border bg-card p-3.5 shadow-sm">
+                <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
+                  Period Total Inflow
+                </div>
+                <div className="text-xl font-bold font-mono mt-1 text-chart-2">
+                  LKR {analytics.kpis.totalIncome.toLocaleString()}
+                </div>
+                <div className="text-[10px] text-muted-foreground mt-0.5">Branch collections</div>
+              </Card>
+
+              <Card className="border-border bg-card p-3.5 shadow-sm">
+                <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
+                  Period Total Outflow
+                </div>
+                <div className="text-xl font-bold font-mono mt-1 text-foreground">
+                  LKR {analytics.kpis.totalExpense.toLocaleString()}
+                </div>
+                <div className="text-[10px] text-muted-foreground mt-0.5">Operational expenses</div>
+              </Card>
+
+              <Card className="border-border bg-card p-3.5 shadow-sm">
+                <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
+                  Net Period Flow
+                </div>
+                <div className={`text-xl font-bold font-mono mt-1 ${analytics.kpis.netBalance >= 0 ? "text-chart-2" : "text-destructive"}`}>
+                  LKR {analytics.kpis.netBalance.toLocaleString()}
+                </div>
+                <div className="text-[10px] text-muted-foreground mt-0.5">Inflows minus outflows</div>
+              </Card>
+
+              <Card className="border-border bg-card p-3.5 shadow-sm">
+                <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
+                  Transactions
+                </div>
+                <div className="text-xl font-bold font-mono mt-1 text-foreground">
+                  {analytics.kpis.totalTransactions}
+                </div>
+                <div className="text-[10px] text-muted-foreground mt-0.5">Active ledger entries</div>
+              </Card>
+            </div>
+          )}
+
+          {/* If Communication: Item-wise Performance Breakdown */}
+          {isCommunication && commAnalytics.itemBreakdown.length > 0 && (
+            <div className="space-y-3">
+              <h3 className="text-sm font-semibold text-foreground">Item-Wise Sales & Profit Breakdown</h3>
+              <div className="overflow-x-auto rounded-xl border border-border bg-card shadow-sm">
+                <table className="w-full text-xs">
+                  <thead className="bg-muted/50 border-b border-border text-muted-foreground font-semibold uppercase tracking-wider text-[10px]">
+                    <tr>
+                      <th className="p-3 text-left">Code</th>
+                      <th className="p-3 text-left">Item Name</th>
+                      <th className="p-3 text-right">Qty Sold</th>
+                      <th className="p-3 text-right">Total Revenue</th>
+                      <th className="p-3 text-right">Total Cost</th>
+                      <th className="p-3 text-right">Net Profit</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    {commAnalytics.itemBreakdown.map((row) => (
+                      <tr key={row.itemCode} className="hover:bg-muted/20">
+                        <td className="p-3 font-mono font-bold text-primary">{row.itemCode}</td>
+                        <td className="p-3 font-medium text-foreground">{row.itemName}</td>
+                        <td className="p-3 font-mono text-right">{row.quantity}</td>
+                        <td className="p-3 font-mono text-right text-chart-2 font-semibold">
+                          LKR {row.revenue.toLocaleString()}
+                        </td>
+                        <td className="p-3 font-mono text-right text-muted-foreground">
+                          LKR {row.cost.toLocaleString()}
+                        </td>
+                        <td className="p-3 font-mono text-right font-bold text-chart-2">
+                          LKR {row.profit.toLocaleString()}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* Transactions Ledger Table */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-base font-semibold text-foreground">
+                  {isCommunication ? "Communication Sales Ledger" : "Branch Ledger Records"}
+                </h3>
+                <p className="text-xs text-muted-foreground">
+                  {isCommunication
+                    ? "Detailed sales transactions, item costs, and cross-branch verification statuses"
+                    : "Sequential chronological ledger for this branch"}
                 </p>
+              </div>
+            </div>
+
+            <DataTable
+              columns={isCommunication ? commColumns : standardColumns}
+              data={isCommunication ? commAnalytics.records : analytics.records}
+              searchKey={isCommunication ? "itemName" : "reason"}
+              searchPlaceholder="Filter records..."
+              loading={loading}
+            />
+          </div>
+        </TabsContent>
+
+        {/* ITEMS & INVENTORY TAB CONTENT */}
+        {isCommunication && (
+          <TabsContent value="items" className="space-y-4 mt-0">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-base font-semibold text-foreground">Registered Products & Services</h3>
+                <p className="text-xs text-muted-foreground">
+                  Manage inventory item codes, wholesale cost prices, and standard selling prices
+                </p>
+              </div>
+
+              <Button
+                onClick={() => {
+                  createItemForm.reset({
+                    shopId: shop._id,
+                    itemCode: "",
+                    name: "",
+                    actualPrice: 0,
+                    description: "",
+                  });
+                  setAddItemOpen(true);
+                }}
+                size="sm"
+                className="gap-1.5 text-xs"
+              >
+                <PlusCircleIcon className="size-3.5" />
+                Add Item
+              </Button>
+            </div>
+
+            <DataTable
+              columns={itemColumns}
+              data={commItems}
+              searchKey="name"
+              searchPlaceholder="Search items by name or code..."
+              loading={loading}
+            />
+          </TabsContent>
+        )}
+
+        {/* STAFF TAB CONTENT */}
+        <TabsContent value="staff" className="space-y-4 mt-0">
+          <div className="rounded-xl border border-border bg-card p-4 space-y-3 shadow-sm">
+            <h3 className="text-sm font-semibold text-foreground">Assigned Officers ({staff.length})</h3>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {staff.map((stf) => (
+                <div key={stf._id} className="rounded-lg border border-border p-3 space-y-1">
+                  <div className="flex items-center justify-between">
+                    <span className="font-semibold text-xs text-foreground">{stf.name}</span>
+                    <Badge variant="outline" className="text-[10px]">Officer</Badge>
+                  </div>
+                  <p className="text-xs text-muted-foreground">{stf.email}</p>
+                  {stf.phone && <p className="text-[11px] text-muted-foreground">Phone: {stf.phone}</p>}
+                </div>
+              ))}
+              {staff.length === 0 && (
+                <div className="col-span-full text-center text-xs text-muted-foreground p-6">
+                  No officers currently assigned to this branch.
+                </div>
               )}
             </div>
           </div>
+        </TabsContent>
+      </Tabs>
 
-          <div className="flex flex-col sm:items-end justify-center shrink-0 border-t border-border pt-3 md:border-t-0 md:pt-0">
-            <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
-              Branch Ledger Balance
-            </div>
-            <div
-              className={`text-2xl font-bold font-mono ${stats.currentBalance >= 0 ? "text-chart-2" : "text-destructive"}`}
-            >
-              LKR {Number(stats.currentBalance || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-            </div>
-            <span className="text-[10px] text-muted-foreground">Sequential running balance</span>
-          </div>
-        </div>
-      </div>
+      {/* ADD ITEM MODAL */}
+      <Dialog open={addItemOpen} onOpenChange={setAddItemOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Register Inventory Item</DialogTitle>
+            <DialogDescription>
+              Add a product or service with code, cost price, and default selling price
+            </DialogDescription>
+          </DialogHeader>
 
-      {/* Filter and Period Selector (Day, Week, Month, Year, Custom Range) */}
-      <div className="flex flex-col gap-4 rounded-xl border border-border bg-card p-4 shadow-sm md:flex-row md:items-center md:justify-between">
-        <div className="flex flex-wrap items-center gap-3">
-          <Tabs
-            value={period}
-            onValueChange={(val: any) => setPeriod(val)}
-            className="w-auto"
-          >
-            <TabsList className="bg-muted">
-              <TabsTrigger value="today" className="text-xs">
-                Day (Today)
-              </TabsTrigger>
-              <TabsTrigger value="week" className="text-xs">
-                Week
-              </TabsTrigger>
-              <TabsTrigger value="month" className="text-xs">
-                Month
-              </TabsTrigger>
-              <TabsTrigger value="year" className="text-xs">
-                Year
-              </TabsTrigger>
-              <TabsTrigger value="custom" className="text-xs">
-                Custom Range
-              </TabsTrigger>
-            </TabsList>
-          </Tabs>
-
-          {period === "custom" && (
-            <div className="flex items-center gap-2">
+          <form onSubmit={createItemForm.handleSubmit(onAddItem)} className="space-y-4 py-2">
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold uppercase text-muted-foreground">Item Code</label>
               <Input
-                type="date"
-                value={startDate}
-                onChange={(e) => setStartDate(e.target.value)}
-                className="h-9 w-36 text-xs"
+                placeholder="e.g. A4-COPY, BIND-01, PEN-BL"
+                {...createItemForm.register("itemCode")}
+                className="h-9 text-xs font-mono uppercase"
               />
-              <span className="text-xs text-muted-foreground">to</span>
+              {createItemForm.formState.errors.itemCode && (
+                <p className="text-xs text-destructive">{createItemForm.formState.errors.itemCode.message}</p>
+              )}
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold uppercase text-muted-foreground">Item Name / Service</label>
               <Input
-                type="date"
-                value={endDate}
-                onChange={(e) => setEndDate(e.target.value)}
-                className="h-9 w-36 text-xs"
+                placeholder="e.g. Photocopy A4 Single Side"
+                {...createItemForm.register("name")}
+                className="h-9 text-xs"
+              />
+              {createItemForm.formState.errors.name && (
+                <p className="text-xs text-destructive">{createItemForm.formState.errors.name.message}</p>
+              )}
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold uppercase text-muted-foreground">Unit Cost Price (LKR) *</label>
+              <Input
+                type="number"
+                step="0.01"
+                placeholder="0.00"
+                {...createItemForm.register("actualPrice", { valueAsNumber: true })}
+                className="h-9 text-xs font-mono font-semibold"
+              />
+              {createItemForm.formState.errors.actualPrice && (
+                <p className="text-xs text-destructive">{createItemForm.formState.errors.actualPrice.message}</p>
+              )}
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold uppercase text-muted-foreground">Description (Optional)</label>
+              <Textarea
+                placeholder="Item specifications or supplier details"
+                {...createItemForm.register("description")}
+                className="text-xs"
+                rows={2}
               />
             </div>
-          )}
-        </div>
 
-        <div className="flex items-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={fetchShopData}
-            disabled={loading}
-            className="gap-1.5 text-xs"
-          >
-            <RefreshCwIcon className={`size-3.5 ${loading ? "animate-spin" : ""}`} />
-            Refresh
-          </Button>
-          <Button
-            variant="default"
-            size="sm"
-            onClick={exportCSV}
-            className="gap-1.5 text-xs"
-          >
-            <DownloadIcon className="size-3.5" />
-            Export Branch CSV
-          </Button>
-        </div>
-      </div>
+            <DialogFooter className="pt-2">
+              <Button type="button" variant="outline" size="sm" onClick={() => setAddItemOpen(false)}>
+                Cancel
+              </Button>
+              <Button type="submit" size="sm" disabled={createItemForm.formState.isSubmitting}>
+                {createItemForm.formState.isSubmitting ? <Loader2Icon className="size-3.5 animate-spin mr-1" /> : null}
+                Save Item
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
 
-      {/* Branch Financial KPI Cards */}
-      <div className="grid gap-3 grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7">
-        <Card className="border-border bg-card shadow-sm p-3.5 col-span-1 min-w-0 overflow-hidden">
-          <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider truncate" title="Transactions in Period">
-            Transactions
-          </div>
-          <div className="text-xl font-bold mt-1 text-foreground truncate font-mono" title={String(analytics.kpis.totalTransactions)}>
-            {analytics.kpis.totalTransactions}
-          </div>
-          <div className="text-[10px] text-muted-foreground truncate" title="Recorded in range">
-            In selected period
-          </div>
-        </Card>
+      {/* EDIT ITEM MODAL */}
+      <Dialog open={editItemOpen} onOpenChange={setEditItemOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Edit Inventory Item</DialogTitle>
+            <DialogDescription>
+              Modify pricing or details for {selectedItem?.itemCode}
+            </DialogDescription>
+          </DialogHeader>
 
-        <Card className="border-border bg-card shadow-sm p-3.5 col-span-1 min-w-0 overflow-hidden">
-          <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider truncate" title="Total Inflow">
-            Total Inflow
-          </div>
-          <div className="text-xl font-bold mt-1 text-chart-2 truncate font-mono" title={`LKR ${analytics.kpis.totalIncome.toLocaleString()}`}>
-            LKR {analytics.kpis.totalIncome.toLocaleString()}
-          </div>
-          <div className="text-[10px] text-muted-foreground truncate" title="Collections & fees">
-            Collections & fees
-          </div>
-        </Card>
+          <form onSubmit={editItemForm.handleSubmit(onEditItem)} className="space-y-4 py-2">
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold uppercase text-muted-foreground">Item Code</label>
+              <Input
+                placeholder="Item Code"
+                {...editItemForm.register("itemCode")}
+                className="h-9 text-xs font-mono uppercase"
+              />
+            </div>
 
-        <Card className="border-border bg-card shadow-sm p-3.5 col-span-1 min-w-0 overflow-hidden">
-          <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider truncate" title="Total Outflow">
-            Total Outflow
-          </div>
-          <div className="text-xl font-bold mt-1 text-foreground truncate font-mono" title={`LKR ${analytics.kpis.totalExpense.toLocaleString()}`}>
-            LKR {analytics.kpis.totalExpense.toLocaleString()}
-          </div>
-          <div className="text-[10px] text-muted-foreground truncate" title="Branch expenses">
-            Branch expenses
-          </div>
-        </Card>
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold uppercase text-muted-foreground">Item Name</label>
+              <Input
+                placeholder="Item Name"
+                {...editItemForm.register("name")}
+                className="h-9 text-xs"
+              />
+            </div>
 
-        <Card className="border-border bg-card shadow-sm p-3.5 col-span-1 min-w-0 overflow-hidden">
-          <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider truncate" title="Net Period Flow">
-            Net Period Flow
-          </div>
-          <div
-            className={`text-xl font-bold mt-1 truncate font-mono ${analytics.kpis.netBalance >= 0 ? "text-chart-2" : "text-destructive"}`}
-            title={`LKR ${analytics.kpis.netBalance.toLocaleString()}`}
-          >
-            LKR {analytics.kpis.netBalance.toLocaleString()}
-          </div>
-          <div className="text-[10px] text-muted-foreground truncate" title="Inflows minus Outflows">
-            Inflows minus Outflows
-          </div>
-        </Card>
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold uppercase text-muted-foreground">Unit Cost Price (LKR) *</label>
+              <Input
+                type="number"
+                step="0.01"
+                {...editItemForm.register("actualPrice", { valueAsNumber: true })}
+                className="h-9 text-xs font-mono font-semibold"
+              />
+            </div>
 
-        <Card className="border-border bg-card shadow-sm p-3.5 col-span-1 min-w-0 overflow-hidden">
-          <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider truncate" title="Pending Approvals">
-            Pending
-          </div>
-          <div className="text-xl font-bold mt-1 text-warning truncate font-mono" title={String(analytics.kpis.pendingApprovals)}>
-            {analytics.kpis.pendingApprovals}
-          </div>
-          <div className="text-[10px] text-muted-foreground truncate" title="Awaiting verifier review">
-            Awaiting verifier
-          </div>
-        </Card>
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold uppercase text-muted-foreground">Description</label>
+              <Textarea
+                {...editItemForm.register("description")}
+                className="text-xs"
+                rows={2}
+              />
+            </div>
 
-        <Card className="border-border bg-card shadow-sm p-3.5 col-span-1 min-w-0 overflow-hidden">
-          <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider truncate" title="Approved Value">
-            Approved Value
-          </div>
-          <div className="text-xl font-bold mt-1 text-chart-2 truncate font-mono" title={`LKR ${analytics.kpis.approvedAmount.toLocaleString()}`}>
-            LKR {analytics.kpis.approvedAmount.toLocaleString()}
-          </div>
-          <div className="text-[10px] text-muted-foreground truncate" title="Finalized capital">
-            Finalized capital
-          </div>
-        </Card>
-
-        <Card className="border-border bg-card shadow-sm p-3.5 col-span-1 min-w-0 overflow-hidden">
-          <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider truncate" title="Rejected Value">
-            Rejected Value
-          </div>
-          <div className="text-xl font-bold mt-1 text-destructive truncate font-mono" title={`LKR ${analytics.kpis.rejectedAmount.toLocaleString()}`}>
-            LKR {analytics.kpis.rejectedAmount.toLocaleString()}
-          </div>
-          <div className="text-[10px] text-muted-foreground truncate" title="Declined submissions">
-            Declined requests
-          </div>
-        </Card>
-      </div>
-
-      {/* Analytics Charts (Line chart for trajectory & Bar chart for volume) */}
-      <div className="grid gap-6 lg:grid-cols-2">
-        {/* Cash Flow Trajectory */}
-        <Card className="border-border bg-card shadow-sm">
-          <CardHeader>
-            <CardTitle className="text-base font-semibold">Cash Flow Trajectory</CardTitle>
-            <CardDescription>
-              Chronological progression of inflows vs outflows for {shop.name}
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="h-72">
-            {analytics.timelineData.length > 0 ? (
-              <ChartContainer config={lineChartConfig} className="h-full w-full">
-                <LineChart data={analytics.timelineData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" className="stroke-border/40" />
-                  <XAxis
-                    dataKey="date"
-                    tickLine={false}
-                    axisLine={false}
-                    tickMargin={8}
-                    className="text-[10px] fill-muted-foreground"
-                    tickFormatter={(val) => {
-                      if (val.includes("(")) return val.split(" ")[1]?.replace(/[()]/g, "") || val;
-                      return val.slice(5);
-                    }}
-                  />
-                  <YAxis
-                    tickLine={false}
-                    axisLine={false}
-                    tickMargin={8}
-                    className="text-[10px] fill-muted-foreground"
-                    tickFormatter={(val) => `${val / 1000}k`}
-                  />
-                  <ChartTooltip content={<ChartTooltipContent />} />
-                  <Line
-                    type="monotone"
-                    dataKey="income"
-                    stroke="var(--color-chart-2)"
-                    strokeWidth={2}
-                    dot={{ r: 3, fill: "var(--color-chart-2)" }}
-                  />
-                  <Line
-                    type="monotone"
-                    dataKey="expense"
-                    stroke="var(--color-chart-1)"
-                    strokeWidth={2}
-                    dot={{ r: 3, fill: "var(--color-chart-1)" }}
-                  />
-                </LineChart>
-              </ChartContainer>
-            ) : (
-              <div className="flex h-full items-center justify-center text-xs text-muted-foreground">
-                No time-series transactions recorded for {shop.name} in this period.
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* Inflow vs Outflow Volume Comparison */}
-        <Card className="border-border bg-card shadow-sm">
-          <CardHeader>
-            <CardTitle className="text-base font-semibold">Cash Flow Volume</CardTitle>
-            <CardDescription>
-              Period total inflows vs operational expenses breakdown
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="h-72">
-            {analytics.timelineData.length > 0 ? (
-              <ChartContainer config={barChartConfig} className="h-full w-full">
-                <BarChart data={analytics.timelineData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" className="stroke-border/40" />
-                  <XAxis
-                    dataKey="date"
-                    tickLine={false}
-                    axisLine={false}
-                    tickMargin={8}
-                    className="text-[10px] fill-muted-foreground"
-                    tickFormatter={(val) => {
-                      if (val.includes("(")) return val.split(" ")[1]?.replace(/[()]/g, "") || val;
-                      return val.slice(5);
-                    }}
-                  />
-                  <YAxis
-                    tickLine={false}
-                    axisLine={false}
-                    tickMargin={8}
-                    className="text-[10px] fill-muted-foreground"
-                    tickFormatter={(val) => `${val / 1000}k`}
-                  />
-                  <ChartTooltip content={<ChartTooltipContent />} />
-                  <Bar dataKey="income" fill="var(--color-chart-2)" radius={[4, 4, 0, 0]} />
-                  <Bar dataKey="expense" fill="var(--color-chart-1)" radius={[4, 4, 0, 0]} />
-                </BarChart>
-              </ChartContainer>
-            ) : (
-              <div className="flex h-full items-center justify-center text-xs text-muted-foreground">
-                No transaction volume recorded in this period.
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Category Spending Breakdown for this shop */}
-      <Card className="border-border bg-card shadow-sm">
-        <CardHeader>
-          <CardTitle className="text-base font-semibold">Expense & Income by Category</CardTitle>
-          <CardDescription>Financial volume breakdown across managed categories for {shop.name}</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-            {analytics.categoryBreakdownData.map((cat) => (
-              <div
-                key={cat.category}
-                className="flex flex-col justify-between rounded-xl border border-border/70 bg-card p-3.5 shadow-sm min-w-0 overflow-hidden"
-              >
-                <div className="flex items-center justify-between gap-2 mb-2.5 min-w-0">
-                  <div className="min-w-0 flex-1 overflow-hidden">
-                    <CategoryBadge name={cat.category} colorToken={cat.colorToken} className="max-w-full" />
-                  </div>
-                  <span
-                    className={`shrink-0 text-[10px] uppercase font-mono px-2 py-0.5 rounded font-semibold border ${
-                      cat.type === "INCOME"
-                        ? "bg-chart-2/15 text-chart-2 border-chart-2/30"
-                        : "bg-muted text-muted-foreground border-border/60"
-                    }`}
-                  >
-                    {cat.type}
-                  </span>
-                </div>
-                <div
-                  className="text-base font-bold text-foreground font-mono truncate"
-                  title={`LKR ${cat.total.toLocaleString(undefined, { minimumFractionDigits: 2 })}`}
-                >
-                  LKR {cat.total.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                </div>
-              </div>
-            ))}
-            {analytics.categoryBreakdownData.length === 0 && (
-              <div className="col-span-full py-8 text-center text-xs text-muted-foreground">
-                No category transactions recorded for this branch in this period.
-              </div>
-            )}
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Tabbed Section: Ledger Transactions & Assigned Officers */}
-      <div className="space-y-4">
-        <Tabs defaultValue="ledger" className="w-full">
-          <div className="flex items-center justify-between border-b border-border pb-2">
-            <TabsList className="bg-muted">
-              <TabsTrigger value="ledger" className="text-xs gap-1.5">
-                <ReceiptIcon className="size-3.5" />
-                Branch Ledger ({analytics.records.length})
-              </TabsTrigger>
-              <TabsTrigger value="staff" className="text-xs gap-1.5">
-                <UsersIcon className="size-3.5" />
-                Assigned Officers ({staff.length})
-              </TabsTrigger>
-            </TabsList>
-          </div>
-
-          {/* Ledger Table Tab */}
-          <TabsContent value="ledger" className="pt-4">
-            <Card className="border-border bg-card shadow-sm">
-              <CardHeader>
-                <CardTitle className="text-base font-semibold">Branch Ledger Transactions</CardTitle>
-                <CardDescription>
-                  Chronological financial ledger entries recorded specifically for {shop.name}
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <DataTable
-                  columns={columns}
-                  data={analytics.records}
-                  searchKey="billNumber"
-                  searchPlaceholder="Search by bill number..."
-                  loading={loading}
-                />
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          {/* Assigned Staff Tab */}
-          <TabsContent value="staff" className="pt-4">
-            <Card className="border-border bg-card shadow-sm">
-              <CardHeader>
-                <CardTitle className="text-base font-semibold">Assigned Finance Personnel</CardTitle>
-                <CardDescription>
-                  Active officers authorized to enter and submit daily expenses for {shop.name}
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                  {staff.map((member) => (
-                    <div
-                      key={member._id}
-                      className="rounded-xl border border-border/70 bg-card p-4 space-y-2 shadow-sm"
-                    >
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2.5">
-                          <div className="flex size-8 items-center justify-center rounded-full bg-primary/10 text-primary font-bold text-xs uppercase">
-                            {member.name.charAt(0)}
-                          </div>
-                          <div>
-                            <div className="text-xs font-semibold text-foreground">{member.name}</div>
-                            <div className="text-[10px] text-muted-foreground">{member.role}</div>
-                          </div>
-                        </div>
-                        <Badge variant="outline" className="text-[10px] uppercase font-mono">
-                          Active
-                        </Badge>
-                      </div>
-
-                      <div className="space-y-1 text-xs pt-1 border-t border-border/50 text-muted-foreground">
-                        <div className="flex items-center gap-1.5 truncate">
-                          <MailIcon className="size-3 text-muted-foreground" />
-                          <span className="truncate">{member.email}</span>
-                        </div>
-                        {member.phone && (
-                          <div className="flex items-center gap-1.5">
-                            <PhoneIcon className="size-3 text-muted-foreground" />
-                            <span>{member.phone}</span>
-                          </div>
-                        )}
-                        <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground/80">
-                          <ClockIcon className="size-3" />
-                          <span>
-                            {member.lastLoginAt
-                              ? `Last active: ${new Date(member.lastLoginAt).toLocaleDateString()}`
-                              : "No recent session"}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                  {staff.length === 0 && (
-                    <div className="col-span-full py-8 text-center text-xs text-muted-foreground">
-                      No staff members are currently assigned to this branch. Go to User Management to assign officers.
-                    </div>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-          </TabsContent>
-        </Tabs>
-      </div>
+            <DialogFooter className="pt-2">
+              <Button type="button" variant="outline" size="sm" onClick={() => setEditItemOpen(false)}>
+                Cancel
+              </Button>
+              <Button type="submit" size="sm" disabled={editItemForm.formState.isSubmitting}>
+                Save Changes
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

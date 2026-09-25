@@ -136,6 +136,7 @@ export default function LoginPage() {
               width={1123}
               height={1587}
               priority
+              unoptimized
               className="w-full h-auto max-h-[540px] object-contain rounded-xl select-none"
             />
           </div>

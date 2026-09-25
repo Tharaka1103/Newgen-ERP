@@ -3,8 +3,11 @@ import mongoose, { Schema, Document, Model } from "mongoose";
 export interface IAuditLog extends Document {
   _id: mongoose.Types.ObjectId;
   actor: mongoose.Types.ObjectId;
+  actorName?: string;
+  actorEmail?: string;
+  actorRole?: string;
   action: string;
-  targetType: "FinanceRecord" | "User" | "Shop" | "Category";
+  targetType: "FinanceRecord" | "User" | "Shop" | "Category" | "BankAccount" | "PettyCashAccount" | "CommunicationItem";
   targetId?: mongoose.Types.ObjectId | null;
   metadata?: Record<string, unknown>;
   ipAddress?: string;
@@ -20,6 +23,18 @@ const AuditLogSchema = new Schema<IAuditLog>(
       required: true,
       index: true,
     },
+    actorName: {
+      type: String,
+      default: "",
+    },
+    actorEmail: {
+      type: String,
+      default: "",
+    },
+    actorRole: {
+      type: String,
+      default: "",
+    },
     action: {
       type: String,
       required: true,
@@ -27,8 +42,9 @@ const AuditLogSchema = new Schema<IAuditLog>(
     },
     targetType: {
       type: String,
-      enum: ["FinanceRecord", "User", "Shop", "Category"],
+      enum: ["FinanceRecord", "User", "Shop", "Category", "BankAccount", "PettyCashAccount", "CommunicationItem"],
       required: true,
+      index: true,
     },
     targetId: {
       type: Schema.Types.ObjectId,
@@ -52,6 +68,8 @@ const AuditLogSchema = new Schema<IAuditLog>(
     timestamps: { createdAt: true, updatedAt: false },
   }
 );
+
+AuditLogSchema.index({ createdAt: -1 });
 
 export const AuditLog: Model<IAuditLog> =
   mongoose.models.AuditLog ||

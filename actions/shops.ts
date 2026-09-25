@@ -53,7 +53,7 @@ export async function getShopsAction() {
 export async function getActiveShopsAction() {
   try {
     await connectDB();
-    const shops = await Shop.find({ isActive: true }).select("_id name code").sort({ name: 1 }).lean();
+    const shops = await Shop.find({ isActive: true }).select("_id name code shopType").sort({ name: 1 }).lean();
     return { success: true, shops: JSON.parse(JSON.stringify(shops)) };
   } catch (error) {
     console.error("Get active shops error:", error);
@@ -131,6 +131,7 @@ export async function createShopAction(formData: unknown) {
       code: result.data.code.toUpperCase(),
       description: result.data.description || "",
       address: result.data.address || "",
+      shopType: result.data.shopType || "STANDARD",
       isActive: true,
       createdBy: new mongoose.Types.ObjectId(session.user.id),
     });
@@ -140,7 +141,7 @@ export async function createShopAction(formData: unknown) {
       action: "CREATE_SHOP",
       targetType: "Shop",
       targetId: newShop._id,
-      metadata: { name: newShop.name, code: newShop.code },
+      metadata: { name: newShop.name, code: newShop.code, shopType: newShop.shopType },
     });
 
     return { success: true, message: "Shop created successfully" };
@@ -184,6 +185,7 @@ export async function updateShopAction(shopId: string, formData: unknown) {
         code: result.data.code.toUpperCase(),
         description: result.data.description || "",
         address: result.data.address || "",
+        shopType: result.data.shopType || "STANDARD",
         isActive: result.data.isActive,
       },
       { new: true }
