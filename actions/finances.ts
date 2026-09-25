@@ -573,3 +573,152 @@ export async function reviewFinanceRecordAction(formData: unknown) {
     return { success: false, error: "Failed to review finance record." };
   }
 }
+
+export async function createCommunicationSaleBatchAction(payload: {
+  shopId: string;
+  items: Array<{
+    communicationItem?: string | null;
+    itemCode?: string | null;
+    itemName: string;
+    quantity: number;
+    actualPrice: number;
+    totalPrice: number;
+    discountPrice: number;
+    amount: number;
+  }>;
+  isRelatedToBranch?: boolean;
+  relatedBranch?: string | null;
+  relatedBranchNote?: string;
+}) {
+  const session = await auth();
+  if (!session?.user?.id) {
+    return { success: false, error: "Unauthorized" };
+  }
+
+  const role = (session.user as { role?: string }).role;
+  if (role !== "STAFF" && !isAdmin(session.user as any)) {
+    return { success: false, error: "Only assigned staff can record sales." };
+  }
+
+  if (!payload.items || payload.items.length === 0) {
+    return { success: false, error: "At least one item is required to record a sale." };
+  }
+
+  try {
+    await connectDB();
+
+    const shop = await Shop.findById(payload.shopId);
+    if (!shop || !shop.isActive) {
+      return { success: false, error: "Invalid or inactive branch." };
+    }
+
+    const isBranchRelated = Boolean(payload.isRelatedToBranch);
+    const relatedBranchId = isBranchRelated && payload.relatedBranch
+      ? new mongoose.Types.ObjectId(payload.relatedBranch)
+      : null;
+    const relatedBranchNote = isBranchRelated ? (payload.relatedBranchNote || "").trim() : "";
+
+    const recordStatus: "PENDING" | "APPROVED" = isBranchRelated ? "PENDING" : "APPROVED";
+    const isLocked = !isBranchRelated;
+
+    // Default INCOME category
+    let category = await Category.findOne({ type: "INCOME", isActive: true });
+    if (!category) {
+      category = await Category.findOne({ isActive: true });
+    }
+
+    const now = new Date();
+    const datePrefix = now.toISOString().slice(2, 7).replace("-", "");
+    const countToday = await FinanceRecord.countDocuments({
+      shop: shop._id,
+      date: {
+        $gte: new Date(new Date().setHours(0, 0, 0, 0)),
+        $lte: new Date(new Date().setHours(23, 59, 59, 999)),
+      },
+    });
+    const seq = String(countToday + 1).padStart(4, "0");
+    const billNumber = `${shop.code || "COMM"}-${datePrefix}-${seq}`;
+
+    let grandTotal = 0;
+
+    for (const item of payload.items) {
+      const netAmount = Math.max(0, Number(item.amount) || Number(item.totalPrice) - Number(item.discountPrice || 0));
+      grandTotal += netAmount;
+      const unitSelling = item.quantity > 0 ? Number((item.totalPrice / item.quantity).toFixed(2)) : item.totalPrice;
+
+      await FinanceRecord.create({
+        date: now,
+        shop: shop._id,
+        category: category?._id || null,
+        paymentMethod: "CASH",
+        bankAccount: null,
+        billNumber,
+        reason: `Retail Sale: ${item.itemName} (${item.quantity} ${item.quantity === 1 ? "unit" : "units"})`,
+        amount: netAmount,
+        type: "INCOME",
+        status: recordStatus,
+        approvedAmount: isBranchRelated ? null : netAmount,
+        runningBalance: 0,
+        isLocked,
+
+        // Communication fields
+        isCommunicationItem: true,
+        communicationItem: item.communicationItem ? new mongoose.Types.ObjectId(item.communicationItem) : null,
+        itemCode: item.itemCode ? item.itemCode.trim().toUpperCase() : null,
+        itemName: item.itemName.trim(),
+        quantity: Number(item.quantity || 1),
+        actualPrice: Number(item.actualPrice || 0),
+        sellingPrice: unitSelling,
+        discountPrice: Number(item.discountPrice || 0),
+        isRelatedToBranch: isBranchRelated,
+        relatedBranch: relatedBranchId,
+        relatedBranchNote,
+
+        isDeleted: false,
+        createdBy: new mongoose.Types.ObjectId(session.user.id),
+      });
+    }
+
+    // Recalculate shop sequential running balance only when auto-approved
+    if (recordStatus === "APPROVED") {
+      await recalculateShopRunningBalance(shop._id, now);
+    }
+
+    await logAuditEvent({
+      actorId: session.user.id,
+      action: "COMMUNICATION_BATCH_SALE",
+      targetType: "Shop",
+      targetId: shop._id,
+      metadata: {
+        billNumber,
+        itemsCount: payload.items.length,
+        grandTotal,
+        isRelatedToBranch: isBranchRelated,
+        relatedBranch: payload.relatedBranch,
+        status: recordStatus,
+        items: payload.items.map((i) => ({
+          code: i.itemCode,
+          name: i.itemName,
+          quantity: i.quantity,
+          actualPrice: i.actualPrice,
+          totalPrice: i.totalPrice,
+          net: i.amount,
+        })),
+      },
+    });
+
+    return {
+      success: true,
+      billNumber,
+      itemsCount: payload.items.length,
+      grandTotal,
+      isAutoApproved: !isBranchRelated,
+      message: isBranchRelated
+        ? `Sale with ${payload.items.length} item(s) submitted for approval.`
+        : `Sale with ${payload.items.length} item(s) recorded successfully.`,
+    };
+  } catch (error) {
+    console.error("Batch sale recording error:", error);
+    return { success: false, error: "Failed to record communication sale." };
+  }
+}

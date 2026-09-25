@@ -4,6 +4,7 @@ import * as React from "react";
 import {
   getFinanceRecordsAction,
   createFinanceRecordAction,
+  createCommunicationSaleBatchAction,
   updateFinanceRecordAction,
   deleteFinanceRecordAction,
   getSuggestedBillNumberAction,
@@ -57,8 +58,23 @@ import {
   CheckCircle2Icon,
   StoreIcon,
   SparklesIcon,
+  ShoppingCartIcon,
+  ReceiptTextIcon,
+  SendIcon,
 } from "lucide-react";
 import { toast } from "@/components/ui/toast";
+
+interface CommCartItem {
+  id: string;
+  communicationItem?: string | null;
+  itemCode: string;
+  itemName: string;
+  actualPrice: number;
+  quantity: number;
+  totalPrice: number;
+  discountPrice: number;
+  netAmount: number;
+}
 
 interface CategoryOption {
   _id: string;
@@ -132,9 +148,41 @@ export function FinancesView({
   const [matchedItem, setMatchedItem] = React.useState<CommunicationItemOption | null>(null);
   const [isUnlistedItem, setIsUnlistedItem] = React.useState(false);
   const [commQuantity, setCommQuantity] = React.useState<number>(1);
-  const [commSellingPrice, setCommSellingPrice] = React.useState<number>(0);
+  const [commTotalPrice, setCommTotalPrice] = React.useState<number>(0);
   const [commDiscountPrice, setCommDiscountPrice] = React.useState<number>(0);
+  const [commCustomItemName, setCommCustomItemName] = React.useState("");
+  const [commCustomCostPrice, setCommCustomCostPrice] = React.useState<number>(0);
   const [commIsRelatedToBranch, setCommIsRelatedToBranch] = React.useState(false);
+  const [commRelatedBranch, setCommRelatedBranch] = React.useState<string | null>(null);
+  const [commRelatedBranchNote, setCommRelatedBranchNote] = React.useState("");
+  const [commCartItems, setCommCartItems] = React.useState<CommCartItem[]>([]);
+  const [alwaysOnForm, setAlwaysOnForm] = React.useState(false);
+  const [submittingCommSale, setSubmittingCommSale] = React.useState(false);
+
+  // Load "always on this form" setting
+  React.useEffect(() => {
+    if (typeof window !== "undefined" && isCommShop) {
+      const saved = localStorage.getItem("comm_always_on_form") === "true";
+      if (saved) {
+        setAlwaysOnForm(true);
+        setCreateOpen(true);
+      }
+    }
+  }, [isCommShop]);
+
+  // Prevent closing when "always on this form" is active
+  const handleCreateOpenChange = (open: boolean) => {
+    if (!open && isCommShop && alwaysOnForm) {
+      toast.create({
+        title: "Form Locked Open",
+        description: "This form is set to stay open. Uncheck 'Always on this form' at the bottom to close.",
+        type: "info",
+      });
+      setCreateOpen(true);
+      return;
+    }
+    setCreateOpen(open);
+  };
 
   // Forms
   const createForm = useForm<CreateFinanceRecordInput>({
@@ -196,7 +244,6 @@ export function FinancesView({
   // Communication item lookup handler
   const handleItemCodeChange = (code: string) => {
     setCommItemLookup(code);
-    createForm.setValue("itemCode", code.toUpperCase());
 
     const clean = code.trim().toUpperCase();
     const found = communicationItems.find((it) => it.itemCode.toUpperCase() === clean);
@@ -204,31 +251,210 @@ export function FinancesView({
     if (found) {
       setMatchedItem(found);
       setIsUnlistedItem(false);
-      createForm.setValue("communicationItem", found._id);
-      createForm.setValue("itemName", found.name);
-      createForm.setValue("actualPrice", found.actualPrice);
-      if (!createForm.getValues("reason")) {
-        createForm.setValue("reason", `Sale: ${found.name} (${found.itemCode})`);
-      }
     } else {
       setMatchedItem(null);
-      createForm.setValue("communicationItem", null);
     }
   };
 
-  // Recalculate net communication amount with quantity
-  React.useEffect(() => {
-    if (isCommShop) {
-      const gross = commSellingPrice * commQuantity;
-      const net = Math.max(0, gross - commDiscountPrice);
-      createForm.setValue("amount", net);
-      createForm.setValue("quantity", commQuantity);
-      createForm.setValue("sellingPrice", commSellingPrice);
-      createForm.setValue("discountPrice", commDiscountPrice);
-    }
-  }, [commSellingPrice, commDiscountPrice, commQuantity, isCommShop]);
+  // Add Item to Multi-Item Cart
+  const handleAddItemToCart = () => {
+    const itemName = isUnlistedItem
+      ? commCustomItemName.trim()
+      : (matchedItem?.name || commItemLookup.trim());
+    const itemCode = isUnlistedItem
+      ? (commItemLookup.trim().toUpperCase() || "CUSTOM")
+      : (matchedItem?.itemCode || commItemLookup.trim().toUpperCase());
 
-  // Open Create Dialog & pre-generate bill number
+    if (isUnlistedItem && !commCustomItemName.trim()) {
+      toast.create({
+        title: "Item Name Required",
+        description: "Please specify the item name for this unlisted item.",
+        type: "error",
+      });
+      return;
+    }
+
+    if (!itemName) {
+      toast.create({
+        title: "Item Name Required",
+        description: "Please specify an item code or name.",
+        type: "error",
+      });
+      return;
+    }
+
+    if (commQuantity <= 0) {
+      toast.create({
+        title: "Invalid Quantity",
+        description: "Quantity must be at least 1.",
+        type: "error",
+      });
+      return;
+    }
+
+    if (commTotalPrice <= 0) {
+      toast.create({
+        title: "Invalid Price",
+        description: "Total price for item must be greater than zero.",
+        type: "error",
+      });
+      return;
+    }
+
+    const discount = Math.max(0, commDiscountPrice || 0);
+    const net = Math.max(0, commTotalPrice - discount);
+    const actualPrice = isUnlistedItem ? (commCustomCostPrice || 0) : (matchedItem?.actualPrice || 0);
+
+    const newItem: CommCartItem = {
+      id: `${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      communicationItem: matchedItem?._id || null,
+      itemCode,
+      itemName,
+      actualPrice,
+      quantity: commQuantity,
+      totalPrice: commTotalPrice,
+      discountPrice: discount,
+      netAmount: net,
+    };
+
+    setCommCartItems((prev) => [...prev, newItem]);
+
+    // Reset item inputs ready for next item
+    setCommItemLookup("");
+    setMatchedItem(null);
+    setIsUnlistedItem(false);
+    setCommCustomItemName("");
+    setCommCustomCostPrice(0);
+    setCommQuantity(1);
+    setCommTotalPrice(0);
+    setCommDiscountPrice(0);
+  };
+
+  const handleRemoveCartItem = (id: string) => {
+    setCommCartItems((prev) => prev.filter((it) => it.id !== id));
+  };
+
+  // Complete and record batch sale
+  const handleBatchCommSale = async () => {
+    if (!userShopId) {
+      toast.create({
+        title: "No branch assigned",
+        description: "Branch assignment is required to record sales.",
+        type: "error",
+      });
+      return;
+    }
+
+    if (commIsRelatedToBranch && !commRelatedBranch) {
+      toast.create({
+        title: "Related Branch Required",
+        description: "Please select the related branch for this cross-branch transaction.",
+        type: "error",
+      });
+      return;
+    }
+
+    let finalItems = [...commCartItems];
+
+    // If cart is empty, check if user filled out the current input fields without clicking "Add Item"
+    if (finalItems.length === 0) {
+      const itemName = isUnlistedItem
+        ? commCustomItemName.trim()
+        : (matchedItem?.name || commItemLookup.trim());
+      const itemCode = isUnlistedItem
+        ? (commItemLookup.trim().toUpperCase() || "CUSTOM")
+        : (matchedItem?.itemCode || commItemLookup.trim().toUpperCase());
+
+      if (itemName && commTotalPrice > 0) {
+        const discount = Math.max(0, commDiscountPrice || 0);
+        const net = Math.max(0, commTotalPrice - discount);
+        const actualPrice = isUnlistedItem ? (commCustomCostPrice || 0) : (matchedItem?.actualPrice || 0);
+
+        finalItems.push({
+          id: `${Date.now()}`,
+          communicationItem: matchedItem?._id || null,
+          itemCode,
+          itemName,
+          actualPrice,
+          quantity: commQuantity || 1,
+          totalPrice: commTotalPrice,
+          discountPrice: discount,
+          netAmount: net,
+        });
+      }
+    }
+
+    if (finalItems.length === 0) {
+      toast.create({
+        title: "No items to record",
+        description: "Please enter item details, quantity, and total price to record the sale.",
+        type: "warning",
+      });
+      return;
+    }
+
+    setSubmittingCommSale(true);
+    try {
+      const res = await createCommunicationSaleBatchAction({
+        shopId: userShopId,
+        items: finalItems.map((it) => ({
+          communicationItem: it.communicationItem,
+          itemCode: it.itemCode,
+          itemName: it.itemName,
+          quantity: it.quantity,
+          actualPrice: it.actualPrice,
+          totalPrice: it.totalPrice,
+          discountPrice: it.discountPrice,
+          amount: it.netAmount,
+        })),
+        isRelatedToBranch: commIsRelatedToBranch,
+        relatedBranch: commRelatedBranch,
+        relatedBranchNote: commRelatedBranchNote,
+      });
+
+      if (res.success) {
+        toast.create({
+          title: res.isAutoApproved ? "Sale Recorded & Approved" : "Submitted for Approval",
+          description: res.isAutoApproved
+            ? `Bill: ${res.billNumber} • ${res.itemsCount} item(s) • Total: LKR ${Number(res.grandTotal).toLocaleString(undefined, { minimumFractionDigits: 2 })}`
+            : `Bill: ${res.billNumber} • ${res.itemsCount} item(s) submitted for verifier approval.`,
+          type: "success",
+        });
+
+        // Reset all inputs and cart items - DO NOT CLOSE FORM
+        setCommCartItems([]);
+        setCommItemLookup("");
+        setMatchedItem(null);
+        setIsUnlistedItem(false);
+        setCommCustomItemName("");
+        setCommCustomCostPrice(0);
+        setCommQuantity(1);
+        setCommTotalPrice(0);
+        setCommDiscountPrice(0);
+        setCommIsRelatedToBranch(false);
+        setCommRelatedBranch(null);
+        setCommRelatedBranchNote("");
+
+        refreshRecords();
+      } else {
+        toast.create({
+          title: "Failed to record sale",
+          description: res.error || "An error occurred",
+          type: "error",
+        });
+      }
+    } catch {
+      toast.create({
+        title: "Error",
+        description: "An unexpected error occurred while saving the sale.",
+        type: "error",
+      });
+    } finally {
+      setSubmittingCommSale(false);
+    }
+  };
+
+  // Open Create Dialog
   const handleOpenCreate = async () => {
     if (!userShopId) {
       toast.create({
@@ -239,82 +465,64 @@ export function FinancesView({
       return;
     }
 
-    // Default to an INCOME category for Communication shop retail sale
-    const defaultCategory = isCommShop
-      ? categories.find((c) => c.type === "INCOME") || categories[0]
-      : categories[0];
-
     // Reset comm state
     setCommItemLookup("");
     setMatchedItem(null);
     setIsUnlistedItem(false);
+    setCommCustomItemName("");
+    setCommCustomCostPrice(0);
     setCommQuantity(1);
-    setCommSellingPrice(0);
+    setCommTotalPrice(0);
     setCommDiscountPrice(0);
     setCommIsRelatedToBranch(false);
-
-    createForm.reset({
-      date: new Date().toISOString().split("T")[0],
-      shop: userShopId,
-      category: defaultCategory?._id || "",
-      paymentMethod: "CASH",
-      bankAccount: null,
-      billNumber: "Generating...",
-      reason: "",
-      amount: 0,
-      type: defaultCategory?.type || (isCommShop ? "INCOME" : "EXPENSE"),
-      isCommunicationItem: isCommShop,
-      itemCode: "",
-      itemName: "",
-      quantity: 1,
-      actualPrice: 0,
-      sellingPrice: 0,
-      discountPrice: 0,
-      isRelatedToBranch: false,
-      relatedBranch: null,
-      relatedBranchNote: "",
-    });
+    setCommRelatedBranch(null);
+    setCommRelatedBranchNote("");
+    setCommCartItems([]);
 
     setCreateOpen(true);
 
-    const billRes = await getSuggestedBillNumberAction();
-    if (billRes.success && billRes.billNumber) {
-      createForm.setValue("billNumber", billRes.billNumber);
+    if (!isCommShop) {
+      const defaultCategory = categories[0];
+      createForm.reset({
+        date: new Date().toISOString().split("T")[0],
+        shop: userShopId,
+        category: defaultCategory?._id || "",
+        paymentMethod: "CASH",
+        bankAccount: null,
+        billNumber: "Generating...",
+        reason: "",
+        amount: 0,
+        type: defaultCategory?.type || "EXPENSE",
+        isCommunicationItem: false,
+        itemCode: "",
+        itemName: "",
+        quantity: 1,
+        actualPrice: 0,
+        sellingPrice: 0,
+        discountPrice: 0,
+        isRelatedToBranch: false,
+        relatedBranch: null,
+        relatedBranchNote: "",
+      });
+
+      const billRes = await getSuggestedBillNumberAction();
+      if (billRes.success && billRes.billNumber) {
+        createForm.setValue("billNumber", billRes.billNumber);
+      }
     }
   };
 
   const onCreateSubmit = async (data: CreateFinanceRecordInput) => {
-    // If communication shop, validate amount & item name
-    if (isCommShop) {
-      if (!data.itemName && !data.itemCode) {
-        toast.create({
-          title: "Item required",
-          description: "Please specify an item code or item name for this sale.",
-          type: "error",
-        });
-        return;
-      }
-      if (data.amount <= 0) {
-        toast.create({
-          title: "Invalid Amount",
-          description: "Net payable amount must be greater than zero.",
-          type: "error",
-        });
-        return;
-      }
-    }
-
     const res = await createFinanceRecordAction(data);
     if (res.success) {
-      const isAutoApproved = isCommShop && !data.isRelatedToBranch;
       toast.create({
-        title: isAutoApproved ? "Transaction Approved" : "Record Submitted",
-        description: isAutoApproved
-          ? "Retail transaction recorded and instantly approved."
-          : "Transaction registered and queued for verification.",
+        title: "Record Submitted",
+        description: "Transaction registered and queued for verification.",
         type: "success",
       });
-      setCreateOpen(false);
+      if (!alwaysOnForm) {
+        setCreateOpen(false);
+      }
       createForm.reset();
       refreshRecords();
     } else {
@@ -665,30 +873,38 @@ export function FinancesView({
       />
 
       {/* CREATE RECORD MODAL */}
-      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-        <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <PlusCircleIcon className="size-4 text-primary" />
-              {isCommShop ? "Record Communication Sale / Expense" : "Add Finance Record"}
-            </DialogTitle>
-            <DialogDescription>
-              {isCommShop
-                ? "Direct retail sales are auto-approved. Branch-related transfers require verifier approval."
-                : `Submit an expense or deposit for ${userShopName}`}
-            </DialogDescription>
-          </DialogHeader>
+      {/* CREATE RECORD MODAL */}
+      <Dialog open={createOpen} onOpenChange={handleCreateOpenChange}>
+        <DialogContent
+          className={
+            isCommShop
+              ? "sm:max-w-3xl md:max-w-4xl max-h-[92vh] overflow-y-auto"
+              : "sm:max-w-lg max-h-[90vh] overflow-y-auto"
+          }
+        >
+          {isCommShop ? (
+            /* ========================================================
+               COMMUNICATION SHOP POS MULTI-ITEM SALES FORM
+               ======================================================== */
+            <div className="space-y-4 py-1">
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2 text-base font-bold">
+                  <StoreIcon className="size-5 text-primary" />
+                  Record Communication Sale
+                </DialogTitle>
+                <DialogDescription className="text-xs">
+                  Direct retail sales with multi-item entry. Instant auto-approval upon recording.
+                </DialogDescription>
+              </DialogHeader>
 
-          <form onSubmit={createForm.handleSubmit(onCreateSubmit)} className="space-y-4 py-2">
-            {/* COMMUNICATION ITEM WORKFLOW */}
-            {isCommShop && (
-              <div className="space-y-3 p-3.5 rounded-lg border border-primary/20 bg-primary/5">
+              {/* ITEM ENTRY CARD */}
+              <div className="space-y-3 p-4 rounded-xl border border-border bg-card shadow-xs">
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-bold uppercase text-primary tracking-wider flex items-center gap-1.5">
-                    <StoreIcon className="size-3.5" />
-                    Item Code &amp; Details
+                    <SparklesIcon className="size-3.5" />
+                    Item Details
                   </span>
-                  <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer">
+                  <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer select-none">
                     <input
                       type="checkbox"
                       checked={isUnlistedItem}
@@ -696,12 +912,11 @@ export function FinancesView({
                         setIsUnlistedItem(e.target.checked);
                         if (e.target.checked) {
                           setMatchedItem(null);
-                          createForm.setValue("communicationItem", null);
                         }
                       }}
                       className="size-3.5 rounded border-border"
                     />
-                    <span>Unlisted / Ad-hoc Item</span>
+                    <span>Unlisted / Custom Item</span>
                   </label>
                 </div>
 
@@ -712,7 +927,7 @@ export function FinancesView({
                         Enter Item Code
                       </label>
                       <Input
-                        placeholder="Type item code (e.g. SIM01, RLD50, ACC02)..."
+                        placeholder="Type item code (e.g. 0010, SIM01, RLD50)..."
                         value={commItemLookup}
                         onChange={(e) => handleItemCodeChange(e.target.value)}
                         className="h-9 text-xs font-mono font-semibold"
@@ -729,34 +944,34 @@ export function FinancesView({
 
                     {/* Matched Item Preview Card */}
                     {matchedItem && (
-                      <div className="p-2.5 rounded-md border border-emerald-500/30 bg-emerald-500/10 text-xs space-y-1">
-                        <div className="flex items-center justify-between">
-                          <span className="font-semibold text-foreground flex items-center gap-1">
-                            <CheckCircle2Icon className="size-3.5 text-emerald-600 dark:text-emerald-400" />
-                            {matchedItem.name}
-                          </span>
-                          <Badge variant="outline" className="text-[10px] font-mono">
-                            {matchedItem.itemCode}
-                          </Badge>
+                      <div className="flex items-center justify-between p-2.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 text-xs">
+                        <div className="flex items-center gap-2">
+                          <CheckCircle2Icon className="size-4 text-emerald-600 dark:text-emerald-400" />
+                          <div>
+                            <span className="font-semibold text-foreground">{matchedItem.name}</span>
+                            <span className="text-muted-foreground ml-2 font-mono text-[11px]">
+                              (Cost: LKR {Number(matchedItem.actualPrice || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })})
+                            </span>
+                          </div>
                         </div>
-                        <div className="flex items-center justify-between text-[11px] text-muted-foreground font-mono pt-1">
-                          <span>Unit Cost: LKR {Number(matchedItem.actualPrice || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
-                          <span className="text-emerald-600 dark:text-emerald-400 font-medium">Catalog Item</span>
-                        </div>
+                        <Badge variant="outline" className="text-[10px] font-mono">
+                          {matchedItem.itemCode}
+                        </Badge>
                       </div>
                     )}
                   </div>
                 ) : (
-                  <div className="space-y-2.5 pt-1">
-                    <div className="grid grid-cols-2 gap-2.5">
+                  <div className="space-y-2.5">
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
                       <div className="space-y-1">
                         <label className="text-[11px] font-semibold text-muted-foreground uppercase">
                           Item Code (Optional)
                         </label>
                         <Input
-                          placeholder="E.g. CUSTOM01"
-                          {...createForm.register("itemCode")}
-                          className="h-8 text-xs font-mono"
+                          placeholder="e.g. CUSTOM"
+                          value={commItemLookup}
+                          onChange={(e) => setCommItemLookup(e.target.value)}
+                          className="h-9 text-xs font-mono"
                         />
                       </div>
                       <div className="space-y-1">
@@ -764,29 +979,33 @@ export function FinancesView({
                           Item Name *
                         </label>
                         <Input
-                          placeholder="E.g. Phone cover repair..."
-                          {...createForm.register("itemName")}
-                          className="h-8 text-xs"
+                          placeholder="e.g. Phone cover repair / Binding..."
+                          value={commCustomItemName}
+                          onChange={(e) => setCommCustomItemName(e.target.value)}
+                          className="h-9 text-xs"
                         />
                       </div>
-                    </div>
-                    <div className="space-y-1">
-                      <label className="text-[11px] font-semibold text-muted-foreground uppercase">
-                        Actual Cost Price (LKR)
-                      </label>
-                      <Input
-                        type="number"
-                        step="any"
-                        placeholder="0.00"
-                        {...createForm.register("actualPrice", { valueAsNumber: true })}
-                        className="h-8 text-xs font-mono"
-                      />
+                      <div className="space-y-1">
+                        <label className="text-[11px] font-semibold text-muted-foreground uppercase flex items-center justify-between">
+                          <span>Unit Cost Price (LKR) *</span>
+                          <span className="text-[10px] text-muted-foreground font-normal lowercase">(for profit)</span>
+                        </label>
+                        <Input
+                          type="number"
+                          min="0"
+                          step="any"
+                          placeholder="0.00"
+                          value={commCustomCostPrice || ""}
+                          onChange={(e) => setCommCustomCostPrice(Math.max(0, Number(e.target.value) || 0))}
+                          className="h-9 text-xs font-mono font-semibold"
+                        />
+                      </div>
                     </div>
                   </div>
                 )}
 
-                {/* Quantity, Selling Price & Discount */}
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 pt-1">
+                {/* QUANTITY, TOTAL PRICE, DISCOUNT, NET */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-1">
                   <div className="space-y-1">
                     <label className="text-[11px] font-semibold text-muted-foreground uppercase">
                       Quantity *
@@ -804,14 +1023,15 @@ export function FinancesView({
 
                   <div className="space-y-1">
                     <label className="text-[11px] font-semibold text-muted-foreground uppercase">
-                      Price / Unit (LKR) *
+                      Total Price for item (LKR) *
                     </label>
                     <Input
                       type="number"
+                      min="0"
                       step="any"
                       placeholder="0.00"
-                      value={commSellingPrice || ""}
-                      onChange={(e) => setCommSellingPrice(Number(e.target.value) || 0)}
+                      value={commTotalPrice || ""}
+                      onChange={(e) => setCommTotalPrice(Math.max(0, Number(e.target.value) || 0))}
                       className="h-9 text-xs font-mono font-semibold"
                     />
                   </div>
@@ -822,225 +1042,385 @@ export function FinancesView({
                     </label>
                     <Input
                       type="number"
+                      min="0"
                       step="any"
                       placeholder="0.00"
                       value={commDiscountPrice || ""}
-                      onChange={(e) => setCommDiscountPrice(Number(e.target.value) || 0)}
+                      onChange={(e) => setCommDiscountPrice(Math.max(0, Number(e.target.value) || 0))}
                       className="h-9 text-xs font-mono"
                     />
                   </div>
 
                   <div className="space-y-1">
                     <label className="text-[11px] font-semibold text-muted-foreground uppercase">
-                      Net Amount (LKR)
+                      Net Total (LKR)
                     </label>
-                    <div className="h-9 px-3 rounded-md border border-border bg-muted/50 flex items-center font-mono text-xs font-bold text-emerald-600 dark:text-emerald-400">
-                      LKR {Math.max(0, commSellingPrice * commQuantity - commDiscountPrice).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    <div className="h-9 px-3 rounded-md border border-border bg-muted/40 flex items-center font-mono text-xs font-bold text-emerald-600 dark:text-emerald-400">
+                      LKR {Math.max(0, commTotalPrice - commDiscountPrice).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                     </div>
                   </div>
                 </div>
 
-                {/* Calculation Summary breakdown */}
-                {commSellingPrice > 0 && (
-                  <div className="flex flex-wrap items-center justify-between gap-2 p-2.5 rounded-md bg-muted/40 border border-border text-[11px] font-mono">
-                    <span className="text-muted-foreground">
-                      Subtotal: {commQuantity} × LKR {commSellingPrice.toLocaleString()} = <strong className="text-foreground">LKR {(commSellingPrice * commQuantity).toLocaleString()}</strong>
-                    </span>
-                    {(matchedItem?.actualPrice || createForm.getValues("actualPrice")) ? (
-                      <span className="text-muted-foreground">
-                        Total Cost: {commQuantity} × LKR {(matchedItem?.actualPrice || createForm.getValues("actualPrice") || 0).toLocaleString()} = <strong className="text-foreground">LKR {((matchedItem?.actualPrice || createForm.getValues("actualPrice") || 0) * commQuantity).toLocaleString()}</strong>
-                      </span>
-                    ) : null}
-                    <span className="text-emerald-600 dark:text-emerald-400 font-semibold">
-                      Est. Profit: LKR {(Math.max(0, commSellingPrice * commQuantity - commDiscountPrice) - ((matchedItem?.actualPrice || createForm.getValues("actualPrice") || 0) * commQuantity)).toLocaleString()}
-                    </span>
-                  </div>
-                )}
-
-                {/* Branch Relationship Checkbox */}
-                <div className="pt-2 border-t border-border/40 space-y-2">
-                  <label className="flex items-center gap-2 cursor-pointer text-xs font-medium text-foreground">
-                    <input
-                      type="checkbox"
-                      checked={commIsRelatedToBranch}
-                      onChange={(e) => {
-                        setCommIsRelatedToBranch(e.target.checked);
-                        createForm.setValue("isRelatedToBranch", e.target.checked);
-                        if (!e.target.checked) {
-                          createForm.setValue("relatedBranch", null);
-                          createForm.setValue("relatedBranchNote", "");
-                        }
-                      }}
-                      className="size-4 rounded border-border"
-                    />
-                    <span>Is this transaction related to another branch / shop?</span>
-                  </label>
-
-                  {commIsRelatedToBranch ? (
-                    <div className="p-3 rounded-lg border border-amber-500/30 bg-amber-500/10 space-y-2">
-                      <div className="flex items-center gap-1.5 text-xs text-amber-700 dark:text-amber-400 font-semibold">
-                        <AlertTriangleIcon className="size-3.5" />
-                        Requires Verifier Review &amp; Approval
-                      </div>
-                      <div className="grid grid-cols-2 gap-2">
-                        <div className="space-y-1">
-                          <label className="text-[10px] uppercase font-semibold text-muted-foreground">
-                            Related Branch
-                          </label>
-                          <select
-                            {...createForm.register("relatedBranch")}
-                            className="w-full h-8 rounded-md border border-border bg-card text-foreground px-2 text-xs font-medium outline-none focus:border-ring [color-scheme:light] dark:[color-scheme:dark]"
-                          >
-                            <option value="" className="bg-white text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100">Select Branch...</option>
-                            {activeShops
-                              .filter((s) => s._id !== userShopId)
-                              .map((s) => (
-                                <option key={s._id} value={s._id} className="bg-white text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100">
-                                  {s.name} ({s.code})
-                                </option>
-                              ))}
-                          </select>
-                        </div>
-                        <div className="space-y-1">
-                          <label className="text-[10px] uppercase font-semibold text-muted-foreground">
-                            Branch Note
-                          </label>
-                          <Input
-                            placeholder="Reason for cross-branch transfer..."
-                            {...createForm.register("relatedBranchNote")}
-                            className="h-8 text-xs bg-background"
-                          />
-                        </div>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="flex items-center gap-1.5 text-[11px] text-emerald-600 dark:text-emerald-400 font-medium">
-                      Direct Retail Sale: Auto-approved upon recording.
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {/* STANDARD FORM FIELDS */}
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold uppercase text-muted-foreground">Date</label>
-                <Input type="date" {...createForm.register("date")} className="h-9 text-xs" />
-                {createForm.formState.errors.date && (
-                  <p className="text-xs text-destructive">{createForm.formState.errors.date.message}</p>
-                )}
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold uppercase text-muted-foreground">Branch</label>
-                <Input value={userShopName || "Unassigned"} disabled className="h-9 text-xs bg-muted/50" />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold uppercase text-muted-foreground">Category</label>
-                <select
-                  value={createForm.watch("category")}
-                  onChange={(e) => handleCategoryChange(e.target.value)}
-                  className="w-full h-9 rounded-md border border-border bg-card text-foreground px-3 text-xs font-medium outline-none focus:border-ring [color-scheme:light] dark:[color-scheme:dark]"
-                >
-                  {categories.map((cat) => (
-                    <option key={cat._id} value={cat._id} className="bg-white text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100">
-                      {cat.name} ({cat.type})
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold uppercase text-muted-foreground">Payment Method</label>
-                <select
-                  {...createForm.register("paymentMethod")}
-                  className="w-full h-9 rounded-md border border-border bg-card text-foreground px-3 text-xs font-medium outline-none focus:border-ring [color-scheme:light] dark:[color-scheme:dark]"
-                >
-                  <option value="CASH" className="bg-white text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100">Cash</option>
-                  <option value="PETTY_CASH" className="bg-white text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100">Petty Cash</option>
-                  <option value="BANK_TRANSFER" className="bg-white text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100">Bank Transfer</option>
-                  <option value="CHEQUE" className="bg-white text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100">Cheque</option>
-                  <option value="ONLINE" className="bg-white text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100">Online</option>
-                </select>
-              </div>
-            </div>
-
-            {/* If Bank Transfer / Online / Cheque: Show Bank Selector */}
-            {(watchPaymentMethod === "BANK_TRANSFER" ||
-              watchPaymentMethod === "ONLINE" ||
-              watchPaymentMethod === "CHEQUE") && (
-                <div className="space-y-1.5 p-2.5 rounded-lg border border-border bg-muted/30">
-                  <label className="text-xs font-semibold uppercase text-muted-foreground flex items-center gap-1.5">
-                    <LandmarkIcon className="size-3.5 text-primary" />
-                    Select Bank Account
-                  </label>
-                  <select
-                    {...createForm.register("bankAccount")}
-                    className="w-full h-9 rounded-md border border-border bg-card text-foreground px-3 text-xs font-medium outline-none focus:border-ring [color-scheme:light] dark:[color-scheme:dark]"
+                <div className="flex justify-end pt-1">
+                  <Button
+                    type="button"
+                    onClick={handleAddItemToCart}
+                    size="sm"
+                    className="gap-1.5 text-xs font-semibold"
                   >
-                    <option value="" className="bg-white text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100">Select Bank Account...</option>
-                    {bankAccounts.map((b) => (
-                      <option key={b._id} value={b._id} className="bg-white text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100">
-                        {b.bankName} - {b.accountName} ({b.accountNumber})
-                      </option>
-                    ))}
-                  </select>
+                    <PlusCircleIcon className="size-3.5" />
+                    Add Item to Sale
+                  </Button>
                 </div>
-              )}
+              </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold uppercase text-muted-foreground">Bill Number</label>
-                <Input {...createForm.register("billNumber")} className="h-9 text-xs font-mono" />
-                {createForm.formState.errors.billNumber && (
-                  <p className="text-xs text-destructive">{createForm.formState.errors.billNumber.message}</p>
+              {/* MULTI-ITEM SALE LIST TABLE */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between text-xs font-semibold text-foreground">
+                  <span className="flex items-center gap-1.5 uppercase text-muted-foreground tracking-wider text-[11px]">
+                    <ShoppingCartIcon className="size-3.5 text-primary" />
+                    Items in this Sale ({commCartItems.length})
+                  </span>
+                  {commCartItems.length > 0 && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="xs"
+                      onClick={() => setCommCartItems([])}
+                      className="text-[11px] text-muted-foreground hover:text-destructive h-6 px-2"
+                    >
+                      Clear List
+                    </Button>
+                  )}
+                </div>
+
+                {commCartItems.length > 0 ? (
+                  <div className="rounded-xl border border-border overflow-hidden">
+                    <table className="w-full text-xs">
+                      <thead className="bg-muted/50 border-b border-border text-[11px] font-semibold text-muted-foreground">
+                        <tr>
+                          <th className="py-2 px-3 text-left w-8">#</th>
+                          <th className="py-2 px-3 text-left">Item</th>
+                          <th className="py-2 px-3 text-center w-16">Qty</th>
+                          <th className="py-2 px-3 text-right">Total Price</th>
+                          <th className="py-2 px-3 text-right">Discount</th>
+                          <th className="py-2 px-3 text-right">Net Amount</th>
+                          <th className="py-2 px-3 text-center w-12">Action</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-border font-mono">
+                        {commCartItems.map((item, idx) => (
+                          <tr key={item.id} className="hover:bg-muted/30">
+                            <td className="py-2 px-3 text-muted-foreground text-center">{idx + 1}</td>
+                            <td className="py-2 px-3 font-sans font-medium text-foreground">
+                              <div>{item.itemName}</div>
+                              <div className="text-[10px] text-muted-foreground font-mono flex items-center gap-2">
+                                <span>{item.itemCode || "ITEM"}</span>
+                                <span>•</span>
+                                <span>Unit Cost: LKR {Number(item.actualPrice || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                              </div>
+                            </td>
+                            <td className="py-2 px-3 text-center">{item.quantity}</td>
+                            <td className="py-2 px-3 text-right">
+                              LKR {item.totalPrice.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                            </td>
+                            <td className="py-2 px-3 text-right text-muted-foreground">
+                              {item.discountPrice > 0 ? `LKR ${item.discountPrice.toLocaleString(undefined, { minimumFractionDigits: 2 })}` : "-"}
+                            </td>
+                            <td className="py-2 px-3 text-right font-semibold text-emerald-600 dark:text-emerald-400">
+                              LKR {item.netAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                            </td>
+                            <td className="py-2 px-3 text-center">
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon-xs"
+                                onClick={() => handleRemoveCartItem(item.id)}
+                                className="text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                                title="Remove Item"
+                              >
+                                <Trash2Icon className="size-3.5" />
+                              </Button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot className="bg-muted/30 border-t border-border font-mono font-bold">
+                        <tr>
+                          <td colSpan={5} className="py-2.5 px-3 text-right text-xs uppercase text-foreground">
+                            Grand Total ({commCartItems.length} {commCartItems.length === 1 ? "item" : "items"}):
+                          </td>
+                          <td className="py-2.5 px-3 text-right text-sm text-emerald-600 dark:text-emerald-400">
+                            LKR {commCartItems.reduce((acc, i) => acc + i.netAmount, 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                          </td>
+                          <td></td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                ) : (
+                  <div className="p-6 rounded-xl border border-dashed border-border text-center text-xs text-muted-foreground space-y-1">
+                    <p className="font-medium text-foreground">No items added to this sale yet.</p>
+                    <p className="text-[11px]">Enter item code, quantity, and total price above, then click &quot;+ Add Item to Sale&quot;.</p>
+                  </div>
                 )}
               </div>
 
-              {!isCommShop && (
-                <div className="space-y-1.5">
-                  <label className="text-xs font-semibold uppercase text-muted-foreground">Amount (LKR)</label>
-                  <Input
-                    type="number"
-                    step="any"
-                    placeholder="0.00"
-                    {...createForm.register("amount", { valueAsNumber: true })}
-                    className="h-9 text-xs font-mono font-semibold"
+              {/* CROSS-BRANCH TRANSFER RELATIONSHIP */}
+              <div className="p-3.5 rounded-xl border border-border bg-card space-y-3">
+                <label className="flex items-center gap-2 cursor-pointer text-xs font-semibold text-foreground select-none">
+                  <input
+                    type="checkbox"
+                    checked={commIsRelatedToBranch}
+                    onChange={(e) => {
+                      setCommIsRelatedToBranch(e.target.checked);
+                      if (!e.target.checked) {
+                        setCommRelatedBranch(null);
+                        setCommRelatedBranchNote("");
+                      }
+                    }}
+                    className="size-4 rounded border-border text-primary focus:ring-primary"
                   />
-                  {createForm.formState.errors.amount && (
-                    <p className="text-xs text-destructive">{createForm.formState.errors.amount.message}</p>
+                  <span>Is this transaction related to another branch / shop?</span>
+                </label>
+
+                {commIsRelatedToBranch && (
+                  <div className="p-3 rounded-lg border border-amber-500/30 bg-amber-500/10 space-y-2.5">
+                    <div className="flex items-center gap-1.5 text-xs text-amber-700 dark:text-amber-400 font-semibold">
+                      <AlertTriangleIcon className="size-3.5" />
+                      Cross-Branch Transfer: Requires Verifier Review &amp; Approval
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div className="space-y-1">
+                        <label className="text-[10px] uppercase font-semibold text-muted-foreground">
+                          Related Branch / Shop *
+                        </label>
+                        <select
+                          value={commRelatedBranch || ""}
+                          onChange={(e) => setCommRelatedBranch(e.target.value || null)}
+                          className="w-full h-8 rounded-md border border-border bg-card text-foreground px-2 text-xs font-medium outline-none focus:border-ring [color-scheme:light] dark:[color-scheme:dark]"
+                        >
+                          <option value="" className="bg-white text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100">
+                            Select Branch / Shop...
+                          </option>
+                          {activeShops
+                            .filter((s) => s._id !== userShopId)
+                            .map((s) => (
+                              <option
+                                key={s._id}
+                                value={s._id}
+                                className="bg-white text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100"
+                              >
+                                {s.name} ({s.code})
+                              </option>
+                            ))}
+                        </select>
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[10px] uppercase font-semibold text-muted-foreground">
+                          Transfer / Cross-Branch Note
+                        </label>
+                        <Input
+                          placeholder="Reason for cross-branch transfer / note..."
+                          value={commRelatedBranchNote}
+                          onChange={(e) => setCommRelatedBranchNote(e.target.value)}
+                          className="h-8 text-xs bg-background"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* FOOTER */}
+              <div className="pt-3 border-t border-border flex flex-col sm:flex-row items-center justify-between gap-3">
+                <label className="flex items-center gap-2 cursor-pointer text-xs font-medium text-foreground select-none">
+                  <input
+                    type="checkbox"
+                    checked={alwaysOnForm}
+                    onChange={(e) => {
+                      setAlwaysOnForm(e.target.checked);
+                      if (typeof window !== "undefined") {
+                        localStorage.setItem("comm_always_on_form", e.target.checked ? "true" : "false");
+                      }
+                    }}
+                    className="size-4 rounded border-border"
+                  />
+                  <span>Always on this form (Keep form open for continuous sales)</span>
+                </label>
+
+                <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      if (alwaysOnForm) {
+                        toast.create({
+                          title: "Form Locked Open",
+                          description: "Uncheck 'Always on this form' at the bottom to close.",
+                          type: "info",
+                        });
+                      } else {
+                        setCreateOpen(false);
+                      }
+                    }}
+                  >
+                    Close Form
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={handleBatchCommSale}
+                    disabled={submittingCommSale}
+                    className="gap-1.5 font-semibold"
+                  >
+                    {submittingCommSale ? (
+                      <Loader2Icon className="size-3.5 animate-spin" />
+                    ) : commIsRelatedToBranch ? (
+                      <SendIcon className="size-3.5" />
+                    ) : (
+                      <ReceiptTextIcon className="size-3.5" />
+                    )}
+                    {commIsRelatedToBranch ? "Submit for Approval" : "Complete & Record Sale"}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          ) : (
+            /* ========================================================
+               STANDARD SHOP FINANCE FORM (TUITION, VOCATIONAL, ETC.)
+               ======================================================== */
+            <>
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2">
+                  <PlusCircleIcon className="size-4 text-primary" />
+                  Add Finance Record
+                </DialogTitle>
+                <DialogDescription>
+                  Submit an expense or deposit for {userShopName}
+                </DialogDescription>
+              </DialogHeader>
+
+              <form onSubmit={createForm.handleSubmit(onCreateSubmit)} className="space-y-4 py-2">
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold uppercase text-muted-foreground">Date</label>
+                    <Input type="date" {...createForm.register("date")} className="h-9 text-xs" />
+                    {createForm.formState.errors.date && (
+                      <p className="text-xs text-destructive">{createForm.formState.errors.date.message}</p>
+                    )}
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold uppercase text-muted-foreground">Branch</label>
+                    <Input value={userShopName || "Unassigned"} disabled className="h-9 text-xs bg-muted/50" />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold uppercase text-muted-foreground">Category</label>
+                    <select
+                      value={createForm.watch("category")}
+                      onChange={(e) => handleCategoryChange(e.target.value)}
+                      className="w-full h-9 rounded-md border border-border bg-card text-foreground px-3 text-xs font-medium outline-none focus:border-ring [color-scheme:light] dark:[color-scheme:dark]"
+                    >
+                      {categories.map((cat) => (
+                        <option key={cat._id} value={cat._id} className="bg-white text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100">
+                          {cat.name} ({cat.type})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold uppercase text-muted-foreground">Payment Method</label>
+                    <select
+                      {...createForm.register("paymentMethod")}
+                      className="w-full h-9 rounded-md border border-border bg-card text-foreground px-3 text-xs font-medium outline-none focus:border-ring [color-scheme:light] dark:[color-scheme:dark]"
+                    >
+                      <option value="CASH" className="bg-white text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100">Cash</option>
+                      <option value="PETTY_CASH" className="bg-white text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100">Petty Cash</option>
+                      <option value="BANK_TRANSFER" className="bg-white text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100">Bank Transfer</option>
+                      <option value="CHEQUE" className="bg-white text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100">Cheque</option>
+                      <option value="ONLINE" className="bg-white text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100">Online</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* If Bank Transfer / Online / Cheque: Show Bank Selector */}
+                {(watchPaymentMethod === "BANK_TRANSFER" ||
+                  watchPaymentMethod === "ONLINE" ||
+                  watchPaymentMethod === "CHEQUE") && (
+                    <div className="space-y-1.5 p-2.5 rounded-lg border border-border bg-muted/30">
+                      <label className="text-xs font-semibold uppercase text-muted-foreground flex items-center gap-1.5">
+                        <LandmarkIcon className="size-3.5 text-primary" />
+                        Select Bank Account
+                      </label>
+                      <select
+                        {...createForm.register("bankAccount")}
+                        className="w-full h-9 rounded-md border border-border bg-card text-foreground px-3 text-xs font-medium outline-none focus:border-ring [color-scheme:light] dark:[color-scheme:dark]"
+                      >
+                        <option value="" className="bg-white text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100">Select Bank Account...</option>
+                        {bankAccounts.map((b) => (
+                          <option key={b._id} value={b._id} className="bg-white text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100">
+                            {b.bankName} - {b.accountName} ({b.accountNumber})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold uppercase text-muted-foreground">Bill Number</label>
+                    <Input {...createForm.register("billNumber")} className="h-9 text-xs font-mono" />
+                    {createForm.formState.errors.billNumber && (
+                      <p className="text-xs text-destructive">{createForm.formState.errors.billNumber.message}</p>
+                    )}
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold uppercase text-muted-foreground">Amount (LKR)</label>
+                    <Input
+                      type="number"
+                      step="any"
+                      placeholder="0.00"
+                      {...createForm.register("amount", { valueAsNumber: true })}
+                      className="h-9 text-xs font-mono font-semibold"
+                    />
+                    {createForm.formState.errors.amount && (
+                      <p className="text-xs text-destructive">{createForm.formState.errors.amount.message}</p>
+                    )}
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold uppercase text-muted-foreground">Reason / Description</label>
+                  <Textarea
+                    placeholder="Details of expense, purpose, or receipt explanation..."
+                    {...createForm.register("reason")}
+                    className="text-xs"
+                    rows={2}
+                  />
+                  {createForm.formState.errors.reason && (
+                    <p className="text-xs text-destructive">{createForm.formState.errors.reason.message}</p>
                   )}
                 </div>
-              )}
-            </div>
 
-            <div className="space-y-1.5">
-              <label className="text-xs font-semibold uppercase text-muted-foreground">Reason / Description</label>
-              <Textarea
-                placeholder="Details of expense, purpose, or receipt explanation..."
-                {...createForm.register("reason")}
-                className="text-xs"
-                rows={2}
-              />
-              {createForm.formState.errors.reason && (
-                <p className="text-xs text-destructive">{createForm.formState.errors.reason.message}</p>
-              )}
-            </div>
-
-            <DialogFooter className="pt-2">
-              <Button type="button" variant="outline" size="sm" onClick={() => setCreateOpen(false)}>
-                Cancel
-              </Button>
-              <Button type="submit" size="sm" disabled={createForm.formState.isSubmitting}>
-                {createForm.formState.isSubmitting ? <Loader2Icon className="size-3.5 animate-spin mr-1" /> : null}
-                {isCommShop && !commIsRelatedToBranch ? "Record & Finalize Sale" : "Submit for Approval"}
-              </Button>
-            </DialogFooter>
-          </form>
+                <DialogFooter className="pt-2">
+                  <Button type="button" variant="outline" size="sm" onClick={() => setCreateOpen(false)}>
+                    Cancel
+                  </Button>
+                  <Button type="submit" size="sm" disabled={createForm.formState.isSubmitting}>
+                    {createForm.formState.isSubmitting ? <Loader2Icon className="size-3.5 animate-spin mr-1" /> : null}
+                    Submit for Approval
+                  </Button>
+                </DialogFooter>
+              </form>
+            </>
+          )}
         </DialogContent>
       </Dialog>
 
