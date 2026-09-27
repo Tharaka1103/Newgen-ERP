@@ -9,6 +9,10 @@ import {
   deleteFinanceRecordAction,
   getSuggestedBillNumberAction,
 } from "@/actions/finances";
+import {
+  searchCreditCustomerAction,
+  repayCustomerDebtAction,
+} from "@/actions/credit";
 import { DataTable } from "@/components/shared/data-table";
 import { ColumnDef } from "@tanstack/react-table";
 import { Button } from "@/components/ui/button";
@@ -61,6 +65,10 @@ import {
   ShoppingCartIcon,
   ReceiptTextIcon,
   SendIcon,
+  HandCoinsIcon,
+  UserCheckIcon,
+  CreditCardIcon,
+  DollarSignIcon,
 } from "lucide-react";
 import { toast } from "@/components/ui/toast";
 
@@ -159,6 +167,124 @@ export function FinancesView({
   const [commCartItems, setCommCartItems] = React.useState<CommCartItem[]>([]);
   const [alwaysOnForm, setAlwaysOnForm] = React.useState(false);
   const [submittingCommSale, setSubmittingCommSale] = React.useState(false);
+
+  // Communication Credit & Payment Method State
+  const [commPaymentMethod, setCommPaymentMethod] = React.useState<"CASH" | "CREDIT" | "BANK_TRANSFER" | "ONLINE">("CASH");
+  const [commCustomerPhone, setCommCustomerPhone] = React.useState("");
+  const [commCustomerName, setCommCustomerName] = React.useState("");
+  const [existingCreditCustomer, setExistingCreditCustomer] = React.useState<{
+    _id: string;
+    name: string;
+    phone: string;
+    currentBalance: number;
+  } | null>(null);
+  const [commBankAccountId, setCommBankAccountId] = React.useState<string | null>(null);
+
+  // Debt Repayment Modal State
+  const [debtRepayOpen, setDebtRepayOpen] = React.useState(false);
+  const [repayPhone, setRepayPhone] = React.useState("");
+  const [repayCustomer, setRepayCustomer] = React.useState<{
+    _id: string;
+    name: string;
+    phone: string;
+    currentBalance: number;
+  } | null>(null);
+  const [repayAmount, setRepayAmount] = React.useState<number>(0);
+  const [repayMethod, setRepayMethod] = React.useState<"CASH" | "BANK_TRANSFER" | "ONLINE">("CASH");
+  const [repayBankId, setRepayBankId] = React.useState<string | null>(null);
+  const [repayNote, setRepayNote] = React.useState("");
+  const [submittingRepay, setSubmittingRepay] = React.useState(false);
+  const [searchingCustomer, setSearchingCustomer] = React.useState(false);
+
+  const handleLookupCustomer = async (phone: string, target: "SALE" | "REPAY") => {
+    if (phone.trim().length >= 3) {
+      if (target === "REPAY") setSearchingCustomer(true);
+      const res = await searchCreditCustomerAction(phone, userShopId || undefined);
+      if (target === "REPAY") setSearchingCustomer(false);
+
+      if (res.success && res.customer) {
+        if (target === "SALE") {
+          setExistingCreditCustomer(res.customer);
+          setCommCustomerName(res.customer.name);
+        } else {
+          setRepayCustomer(res.customer);
+          setRepayAmount(res.customer.currentBalance);
+        }
+      } else {
+        if (target === "SALE") {
+          setExistingCreditCustomer(null);
+        } else {
+          setRepayCustomer(null);
+        }
+      }
+    } else {
+      if (target === "SALE") setExistingCreditCustomer(null);
+      if (target === "REPAY") setRepayCustomer(null);
+    }
+  };
+
+  const handleDebtRepaymentSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!userShopId || !repayCustomer) return;
+
+    if (repayAmount <= 0) {
+      toast.create({
+        title: "Invalid Amount",
+        description: "Repayment amount must be greater than zero.",
+        type: "error",
+      });
+      return;
+    }
+
+    if (repayAmount > repayCustomer.currentBalance) {
+      toast.create({
+        title: "Amount Exceeds Debt",
+        description: `Cannot repay more than outstanding debt (LKR ${repayCustomer.currentBalance.toLocaleString()}).`,
+        type: "error",
+      });
+      return;
+    }
+
+    setSubmittingRepay(true);
+    try {
+      const res = await repayCustomerDebtAction({
+        shopId: userShopId,
+        customerCreditId: repayCustomer._id,
+        amount: repayAmount,
+        paymentMethod: repayMethod,
+        bankAccountId: repayBankId,
+        note: repayNote,
+      });
+
+      if (res.success) {
+        toast.create({
+          title: "Debt Repayment Recorded",
+          description: res.message || "Payment collected and shop balance updated.",
+          type: "success",
+        });
+        setDebtRepayOpen(false);
+        setRepayPhone("");
+        setRepayCustomer(null);
+        setRepayAmount(0);
+        setRepayNote("");
+        refreshRecords();
+      } else {
+        toast.create({
+          title: "Failed to record payment",
+          description: res.error || "An error occurred",
+          type: "error",
+        });
+      }
+    } catch {
+      toast.create({
+        title: "Error",
+        description: "Failed to connect to server.",
+        type: "error",
+      });
+    } finally {
+      setSubmittingRepay(false);
+    }
+  };
 
   // Load "always on this form" setting
   React.useEffect(() => {
@@ -424,6 +550,25 @@ export function FinancesView({
       return;
     }
 
+    if (commPaymentMethod === "CREDIT") {
+      if (!commCustomerPhone.trim()) {
+        toast.create({
+          title: "Customer Mobile Required",
+          description: "Please enter the customer's mobile number for this credit sale.",
+          type: "error",
+        });
+        return;
+      }
+      if (!commCustomerName.trim()) {
+        toast.create({
+          title: "Customer Name Required",
+          description: "Please enter the customer's name for this credit sale.",
+          type: "error",
+        });
+        return;
+      }
+    }
+
     setSubmittingCommSale(true);
     try {
       const res = await createCommunicationSaleBatchAction({
@@ -439,6 +584,10 @@ export function FinancesView({
           discountPrice: it.discountPrice,
           amount: it.netAmount,
         })),
+        paymentMethod: commPaymentMethod,
+        customerName: commPaymentMethod === "CREDIT" ? commCustomerName.trim() : undefined,
+        customerPhone: commPaymentMethod === "CREDIT" ? commCustomerPhone.trim() : undefined,
+        bankAccountId: commPaymentMethod === "BANK_TRANSFER" ? commBankAccountId : null,
         isRelatedToBranch: commIsRelatedToBranch,
         relatedBranch: commRelatedBranch,
         relatedBranchNote: commRelatedBranchNote,
@@ -466,6 +615,11 @@ export function FinancesView({
         setCommIsRelatedToBranch(false);
         setCommRelatedBranch(null);
         setCommRelatedBranchNote("");
+        setCommPaymentMethod("CASH");
+        setCommCustomerPhone("");
+        setCommCustomerName("");
+        setExistingCreditCustomer(null);
+        setCommBankAccountId(null);
 
         refreshRecords();
       } else {
@@ -883,15 +1037,36 @@ export function FinancesView({
           </p>
         </div>
 
-        <Button
-          onClick={handleOpenCreate}
-          disabled={unassignedStaff || !userShopId}
-          size="sm"
-          className="gap-1.5 text-xs font-semibold"
-        >
-          <PlusCircleIcon className="size-3.5" />
-          Add New Record
-        </Button>
+        <div className="flex items-center gap-2">
+          {isCommShop && (
+            <Button
+              onClick={() => {
+                setRepayPhone("");
+                setRepayCustomer(null);
+                setRepayAmount(0);
+                setRepayNote("");
+                setDebtRepayOpen(true);
+              }}
+              disabled={unassignedStaff || !userShopId}
+              variant="outline"
+              size="sm"
+              className="gap-1.5 text-xs font-semibold border-amber-500/40 text-amber-700 dark:text-amber-400 hover:bg-amber-500/10"
+            >
+              <HandCoinsIcon className="size-3.5" />
+              Settle Debt
+            </Button>
+          )}
+
+          <Button
+            onClick={handleOpenCreate}
+            disabled={unassignedStaff || !userShopId}
+            size="sm"
+            className="gap-1.5 text-xs font-semibold"
+          >
+            <PlusCircleIcon className="size-3.5" />
+            Add New Record
+          </Button>
+        </div>
       </div>
 
       {/* Filter Bar */}
@@ -1223,6 +1398,109 @@ export function FinancesView({
                   <div className="p-6 rounded-xl border border-dashed border-border text-center text-xs text-muted-foreground space-y-1">
                     <p className="font-medium text-foreground">No items added to this sale yet.</p>
                     <p className="text-[11px]">Enter item code, quantity, and total price above, then click &quot;+ Add Item to Sale&quot;.</p>
+                  </div>
+                )}
+              </div>
+
+              {/* PAYMENT METHOD & CUSTOMER CREDIT SETTINGS */}
+              <div className="p-3.5 rounded-xl border border-border bg-card space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div className="flex items-center gap-1.5 text-xs font-bold uppercase text-foreground">
+                    <DollarSignIcon className="size-3.5 text-primary" />
+                    <span>Payment Method</span>
+                  </div>
+
+                  <div className="flex items-center gap-1.5 bg-muted p-1 rounded-lg">
+                    <button
+                      type="button"
+                      onClick={() => setCommPaymentMethod("CASH")}
+                      className={`px-3 py-1 text-xs font-semibold rounded-md transition-all ${commPaymentMethod === "CASH" ? "bg-card text-foreground shadow-xs" : "text-muted-foreground hover:text-foreground"}`}
+                    >
+                      Cash
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setCommPaymentMethod("CREDIT")}
+                      className={`px-3 py-1 text-xs font-semibold rounded-md transition-all ${commPaymentMethod === "CREDIT" ? "bg-amber-500 text-white shadow-xs" : "text-muted-foreground hover:text-foreground"}`}
+                    >
+                      Credit
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setCommPaymentMethod("BANK_TRANSFER")}
+                      className={`px-3 py-1 text-xs font-semibold rounded-md transition-all ${commPaymentMethod === "BANK_TRANSFER" ? "bg-card text-foreground shadow-xs" : "text-muted-foreground hover:text-foreground"}`}
+                    >
+                      Bank / Online
+                    </button>
+                  </div>
+                </div>
+
+                {/* If CREDIT is selected, show Customer Phone & Name with auto-lookup */}
+                {commPaymentMethod === "CREDIT" && (
+                  <div className="p-3 rounded-lg border border-amber-500/30 bg-amber-500/10 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-amber-800 dark:text-amber-300 flex items-center gap-1.5">
+                        <UserCheckIcon className="size-3.5" />
+                        Credit Customer Information
+                      </span>
+                      {existingCreditCustomer && (
+                        <Badge variant="outline" className="text-[10px] font-mono border-amber-500/40 bg-card text-amber-700 dark:text-amber-300">
+                          Existing Debt: LKR {Number(existingCreditCustomer.currentBalance).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                        </Badge>
+                      )}
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div className="space-y-1">
+                        <label className="text-[10px] uppercase font-semibold text-muted-foreground flex items-center justify-between">
+                          <span>Mobile Number *</span>
+                          <span className="text-[9px] text-muted-foreground font-normal">(auto-lookup)</span>
+                        </label>
+                        <Input
+                          placeholder="e.g. 0771234567"
+                          value={commCustomerPhone}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setCommCustomerPhone(val);
+                            handleLookupCustomer(val, "SALE");
+                          }}
+                          className="h-8 text-xs font-mono font-semibold bg-background"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="text-[10px] uppercase font-semibold text-muted-foreground">
+                          Customer Name *
+                        </label>
+                        <Input
+                          placeholder="e.g. Kamal Perera"
+                          value={commCustomerName}
+                          onChange={(e) => setCommCustomerName(e.target.value)}
+                          className="h-8 text-xs font-medium bg-background"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* If BANK_TRANSFER is selected */}
+                {commPaymentMethod === "BANK_TRANSFER" && (
+                  <div className="p-3 rounded-lg border border-border bg-muted/30 space-y-2">
+                    <label className="text-[10px] uppercase font-semibold text-muted-foreground">
+                      Target Bank Account (Optional)
+                    </label>
+                    <select
+                      value={commBankAccountId || ""}
+                      onChange={(e) => setCommBankAccountId(e.target.value || null)}
+                      className="w-full h-8 rounded-md border border-border bg-card text-foreground px-2 text-xs font-medium outline-none focus:border-ring"
+                    >
+                      <option value="">Select Bank Account (or Leave Empty)...</option>
+                      {bankAccounts.map((b) => (
+                        <option key={b._id} value={b._id}>
+                          {b.bankName} - {b.accountNumber} ({b.accountName})
+                        </option>
+                      ))}
+                    </select>
                   </div>
                 )}
               </div>
@@ -1767,6 +2045,180 @@ export function FinancesView({
               <Button type="submit" size="sm" disabled={editForm.formState.isSubmitting}>
                 {editForm.formState.isSubmitting ? <Loader2Icon className="size-3.5 animate-spin mr-1" /> : null}
                 Save Modifications
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* DEBT REPAYMENT MODAL */}
+      <Dialog open={debtRepayOpen} onOpenChange={setDebtRepayOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <HandCoinsIcon className="size-4 text-amber-600 dark:text-amber-400" />
+              Settle Customer Debt
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+              Collect outstanding debt payments from credit customers for {userShopName}. Instant auto-approval and running cash balance update.
+            </DialogDescription>
+          </DialogHeader>
+
+          <form onSubmit={handleDebtRepaymentSubmit} className="space-y-4 py-2">
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold uppercase text-muted-foreground flex items-center justify-between">
+                <span>Customer Mobile Number *</span>
+                {searchingCustomer && (
+                  <span className="text-[10px] text-primary flex items-center gap-1 font-normal">
+                    <Loader2Icon className="size-3 animate-spin" /> Searching...
+                  </span>
+                )}
+              </label>
+              <Input
+                placeholder="e.g. 0771234567"
+                value={repayPhone}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setRepayPhone(val);
+                  handleLookupCustomer(val, "REPAY");
+                }}
+                className="h-9 text-xs font-mono font-semibold"
+              />
+            </div>
+
+            {/* Found Customer Details */}
+            {repayCustomer && (
+              <div className="p-3 rounded-xl border border-amber-500/30 bg-amber-500/10 space-y-2">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <span className="text-xs font-bold text-foreground block">{repayCustomer.name}</span>
+                    <span className="text-[11px] font-mono text-muted-foreground">{repayCustomer.phone}</span>
+                  </div>
+                  <div className="text-right">
+                    <span className="text-[10px] uppercase text-muted-foreground font-semibold block">Outstanding Debt</span>
+                    <span className="text-sm font-bold font-mono text-amber-700 dark:text-amber-400">
+                      LKR {Number(repayCustomer.currentBalance).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex justify-end pt-1">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="xs"
+                    onClick={() => setRepayAmount(repayCustomer.currentBalance)}
+                    className="text-[10px] h-6 px-2 border-amber-500/30 text-amber-700 dark:text-amber-400 hover:bg-amber-500/15"
+                  >
+                    Pay Full Amount (LKR {Number(repayCustomer.currentBalance).toLocaleString()})
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            {!repayCustomer && repayPhone.trim().length >= 3 && !searchingCustomer && (
+              <div className="p-3 rounded-lg border border-dashed border-border bg-muted/20 text-center text-xs text-muted-foreground">
+                No credit customer found with number &quot;{repayPhone}&quot; in this shop.
+              </div>
+            )}
+
+            {repayCustomer && (
+              <>
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold uppercase text-muted-foreground flex items-center justify-between">
+                    <span>Payment Amount (LKR) *</span>
+                    <span className="text-[10px] text-muted-foreground font-normal lowercase">(max: LKR {Number(repayCustomer.currentBalance).toLocaleString()})</span>
+                  </label>
+                  <Input
+                    type="number"
+                    min="1"
+                    max={repayCustomer.currentBalance}
+                    step="any"
+                    value={repayAmount || ""}
+                    onChange={(e) => setRepayAmount(Number(e.target.value) || 0)}
+                    placeholder="0.00"
+                    className="h-9 text-xs font-mono font-bold text-emerald-600 dark:text-emerald-400"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold uppercase text-muted-foreground">
+                    Payment Method
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setRepayMethod("CASH")}
+                      className={`flex-1 py-1.5 px-3 rounded-md text-xs font-semibold border transition-all ${repayMethod === "CASH"
+                          ? "bg-primary text-primary-foreground border-primary"
+                          : "border-border text-muted-foreground hover:bg-muted"
+                        }`}
+                    >
+                      Cash
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setRepayMethod("BANK_TRANSFER")}
+                      className={`flex-1 py-1.5 px-3 rounded-md text-xs font-semibold border transition-all ${repayMethod === "BANK_TRANSFER"
+                          ? "bg-primary text-primary-foreground border-primary"
+                          : "border-border text-muted-foreground hover:bg-muted"
+                        }`}
+                    >
+                      Bank / Online
+                    </button>
+                  </div>
+                </div>
+
+                {repayMethod === "BANK_TRANSFER" && (
+                  <div className="space-y-1.5 p-2.5 rounded-lg border border-border bg-muted/30">
+                    <label className="text-xs font-semibold uppercase text-muted-foreground">
+                      Target Bank Account
+                    </label>
+                    <select
+                      value={repayBankId || ""}
+                      onChange={(e) => setRepayBankId(e.target.value || null)}
+                      className="w-full h-8 rounded-md border border-border bg-card text-foreground px-2 text-xs font-medium outline-none focus:border-ring"
+                    >
+                      <option value="">Select Bank Account (or Leave Empty)...</option>
+                      {bankAccounts.map((b) => (
+                        <option key={b._id} value={b._id}>
+                          {b.bankName} - {b.accountNumber} ({b.accountName})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold uppercase text-muted-foreground">
+                    Note / Receipt Reference (Optional)
+                  </label>
+                  <Input
+                    placeholder="e.g. Settle bill balance / receipt number..."
+                    value={repayNote}
+                    onChange={(e) => setRepayNote(e.target.value)}
+                    className="h-8 text-xs"
+                  />
+                </div>
+              </>
+            )}
+
+            <DialogFooter className="pt-2">
+              <Button type="button" variant="outline" size="sm" onClick={() => setDebtRepayOpen(false)}>
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                size="sm"
+                disabled={submittingRepay || !repayCustomer || repayAmount <= 0}
+                className="gap-1.5 font-semibold bg-emerald-600 hover:bg-emerald-700 text-white"
+              >
+                {submittingRepay ? (
+                  <Loader2Icon className="size-3.5 animate-spin" />
+                ) : (
+                  <CheckCircle2Icon className="size-3.5" />
+                )}
+                Collect &amp; Record Repayment
               </Button>
             </DialogFooter>
           </form>

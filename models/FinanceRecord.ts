@@ -5,7 +5,7 @@ export interface IFinanceRecord extends Document {
   date: Date;
   shop?: mongoose.Types.ObjectId | null;
   category?: mongoose.Types.ObjectId | null;
-  paymentMethod: "CASH" | "BANK_TRANSFER" | "CHEQUE" | "ONLINE" | "PETTY_CASH";
+  paymentMethod: "CASH" | "CREDIT" | "BANK_TRANSFER" | "CHEQUE" | "ONLINE" | "PETTY_CASH";
   bankAccount?: mongoose.Types.ObjectId | null;
   billNumber: string;
   reason: string;
@@ -18,6 +18,12 @@ export interface IFinanceRecord extends Document {
   reviewRemarks?: string | null;
   runningBalance: number;
   isLocked: boolean;
+
+  // Customer Credit & Debt Repayment Fields
+  customerCredit?: mongoose.Types.ObjectId | null;
+  customerName?: string | null;
+  customerPhone?: string | null;
+  isDebtRepayment?: boolean;
 
   // Communication Shop Specific Fields
   isCommunicationItem?: boolean;
@@ -64,7 +70,7 @@ const FinanceRecordSchema = new Schema<IFinanceRecord>(
     },
     paymentMethod: {
       type: String,
-      enum: ["CASH", "BANK_TRANSFER", "CHEQUE", "ONLINE", "PETTY_CASH"],
+      enum: ["CASH", "CREDIT", "BANK_TRANSFER", "CHEQUE", "ONLINE", "PETTY_CASH"],
       default: "CASH",
       required: true,
       index: true,
@@ -126,6 +132,30 @@ const FinanceRecordSchema = new Schema<IFinanceRecord>(
       default: 0,
     },
     isLocked: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+
+    // Customer Credit & Debt Repayment Fields
+    customerCredit: {
+      type: Schema.Types.ObjectId,
+      ref: "CustomerCredit",
+      default: null,
+      index: true,
+    },
+    customerName: {
+      type: String,
+      default: null,
+      trim: true,
+    },
+    customerPhone: {
+      type: String,
+      default: null,
+      trim: true,
+      index: true,
+    },
+    isDebtRepayment: {
       type: Boolean,
       default: false,
       index: true,
@@ -216,6 +246,14 @@ const FinanceRecordSchema = new Schema<IFinanceRecord>(
 // Compound index for chronological query & balance calculation per shop
 FinanceRecordSchema.index({ shop: 1, date: 1, createdAt: 1 });
 FinanceRecordSchema.index({ isDeleted: 1, date: 1 });
+
+// Ensure schema updates (such as newly added enum values) are re-compiled
+if (mongoose.models && mongoose.models.FinanceRecord) {
+  delete (mongoose.models as any).FinanceRecord;
+}
+if ((mongoose as any).connection?.models?.FinanceRecord) {
+  delete (mongoose as any).connection.models.FinanceRecord;
+}
 
 export const FinanceRecord: Model<IFinanceRecord> =
   mongoose.models.FinanceRecord ||

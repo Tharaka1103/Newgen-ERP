@@ -7,7 +7,7 @@ export interface IAuditLog extends Document {
   actorEmail?: string;
   actorRole?: string;
   action: string;
-  targetType: "FinanceRecord" | "User" | "Shop" | "Category" | "BankAccount" | "PettyCashAccount" | "CommunicationItem";
+  targetType: "FinanceRecord" | "User" | "Shop" | "Category" | "BankAccount" | "PettyCashAccount" | "CommunicationItem" | "CustomerCredit" | "CreditTransaction";
   targetId?: mongoose.Types.ObjectId | null;
   metadata?: Record<string, unknown>;
   ipAddress?: string;
@@ -42,7 +42,7 @@ const AuditLogSchema = new Schema<IAuditLog>(
     },
     targetType: {
       type: String,
-      enum: ["FinanceRecord", "User", "Shop", "Category", "BankAccount", "PettyCashAccount", "CommunicationItem"],
+      enum: ["FinanceRecord", "User", "Shop", "Category", "BankAccount", "PettyCashAccount", "CommunicationItem", "CustomerCredit", "CreditTransaction"],
       required: true,
       index: true,
     },
@@ -70,6 +70,14 @@ const AuditLogSchema = new Schema<IAuditLog>(
 );
 
 AuditLogSchema.index({ createdAt: -1 });
+
+// Ensure schema updates (such as newly added targetType enum values) are re-compiled
+if (mongoose.models && mongoose.models.AuditLog) {
+  delete (mongoose.models as any).AuditLog;
+}
+if ((mongoose as any).connection?.models?.AuditLog) {
+  delete (mongoose as any).connection.models.AuditLog;
+}
 
 export const AuditLog: Model<IAuditLog> =
   mongoose.models.AuditLog ||

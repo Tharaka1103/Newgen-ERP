@@ -5,10 +5,12 @@ import connectDB from "@/lib/mongodb";
 import { Shop } from "@/models/Shop";
 import { User } from "@/models/User";
 import { FinanceRecord } from "@/models/FinanceRecord";
+import { CustomerCredit } from "@/models/CustomerCredit";
 import { sanitizeInput } from "@/lib/sanitize";
 import { createShopSchema, updateShopSchema } from "@/schemas/shop";
 import { isAdmin } from "@/lib/rbac";
 import { logAuditEvent } from "@/lib/audit";
+import { getShopCashBalance } from "@/lib/balance";
 import mongoose from "mongoose";
 
 export async function getShopsAction() {
@@ -16,7 +18,7 @@ export async function getShopsAction() {
     await connectDB();
     const shops = await Shop.find().sort({ createdAt: -1 }).lean();
 
-    // Attach count of active staff assigned to each shop
+    // Attach count of active staff assigned to each shop and exact balances
     const shopsWithCounts = await Promise.all(
       shops.map(async (shop) => {
         const staffCount = await User.countDocuments({
@@ -26,19 +28,29 @@ export async function getShopsAction() {
         });
         const recordsCount = await FinanceRecord.countDocuments({
           shop: shop._id,
+          isDeleted: { $ne: true },
         });
 
-        // Get latest record running balance
-        const latestRecord = await FinanceRecord.findOne({ shop: shop._id })
-          .sort({ date: -1, createdAt: -1 })
-          .select("runningBalance")
-          .lean();
+        // Compute true physical cash balance
+        const currentBalance = await getShopCashBalance(shop._id);
+
+        let totalCustomerCredit = 0;
+        if (shop.shopType === "COMMUNICATION") {
+          const creditAgg = await CustomerCredit.aggregate([
+            { $match: { shop: shop._id } },
+            { $group: { _id: null, total: { $sum: "$currentBalance" } } },
+          ]);
+          if (creditAgg.length > 0) {
+            totalCustomerCredit = creditAgg[0].total || 0;
+          }
+        }
 
         return {
           ...shop,
           staffCount,
           recordsCount,
-          currentBalance: latestRecord?.runningBalance || 0,
+          currentBalance,
+          totalCustomerCredit,
         };
       })
     );
@@ -71,14 +83,31 @@ export async function getShopDetailsAction(shopId: string) {
       .select("name email phone role lastLoginAt")
       .lean();
 
-    const recordsCount = await FinanceRecord.countDocuments({ shop: shop._id });
-    const pendingCount = await FinanceRecord.countDocuments({ shop: shop._id, status: "PENDING" });
-    const approvedCount = await FinanceRecord.countDocuments({ shop: shop._id, status: "APPROVED" });
+    const recordsCount = await FinanceRecord.countDocuments({ shop: shop._id, isDeleted: { $ne: true } });
+    const pendingCount = await FinanceRecord.countDocuments({ shop: shop._id, status: "PENDING", isDeleted: { $ne: true } });
+    const approvedCount = await FinanceRecord.countDocuments({ shop: shop._id, status: "APPROVED", isDeleted: { $ne: true } });
 
-    const latestRecord = await FinanceRecord.findOne({ shop: shop._id })
-      .sort({ date: -1, createdAt: -1 })
-      .select("runningBalance")
-      .lean();
+    // Compute true physical cash balance
+    const currentBalance = await getShopCashBalance(shop._id);
+
+    let totalCustomerCredit = 0;
+    let creditCustomerCount = 0;
+    if (shop.shopType === "COMMUNICATION") {
+      const creditAgg = await CustomerCredit.aggregate([
+        { $match: { shop: shop._id } },
+        {
+          $group: {
+            _id: null,
+            total: { $sum: "$currentBalance" },
+            count: { $sum: 1 },
+          },
+        },
+      ]);
+      if (creditAgg.length > 0) {
+        totalCustomerCredit = creditAgg[0].total || 0;
+        creditCustomerCount = creditAgg[0].count || 0;
+      }
+    }
 
     return {
       success: true,
@@ -88,7 +117,9 @@ export async function getShopDetailsAction(shopId: string) {
         recordsCount,
         pendingCount,
         approvedCount,
-        currentBalance: latestRecord?.runningBalance || 0,
+        currentBalance,
+        totalCustomerCredit,
+        creditCustomerCount,
       },
     };
   } catch (error) {

@@ -8,6 +8,8 @@ import { Category } from "@/models/Category";
 import { User } from "@/models/User";
 import { BankAccount } from "@/models/BankAccount";
 import { PettyCashAccount } from "@/models/PettyCashAccount";
+import { CustomerCredit } from "@/models/CustomerCredit";
+import { CreditTransaction } from "@/models/CreditTransaction";
 import { sanitizeInput } from "@/lib/sanitize";
 import {
   createFinanceRecordSchema,
@@ -629,6 +631,10 @@ export async function createCommunicationSaleBatchAction(payload: {
     discountPrice: number;
     amount: number;
   }>;
+  paymentMethod?: "CASH" | "CREDIT" | "BANK_TRANSFER" | "ONLINE";
+  customerName?: string;
+  customerPhone?: string;
+  bankAccountId?: string | null;
   isRelatedToBranch?: boolean;
   relatedBranch?: string | null;
   relatedBranchNote?: string;
@@ -647,6 +653,18 @@ export async function createCommunicationSaleBatchAction(payload: {
     return { success: false, error: "At least one item is required to record a sale." };
   }
 
+  const paymentMethod = payload.paymentMethod || "CASH";
+  const isCredit = paymentMethod === "CREDIT";
+
+  if (isCredit) {
+    if (!payload.customerPhone || !payload.customerPhone.trim()) {
+      return { success: false, error: "Customer mobile number is required for credit sales." };
+    }
+    if (!payload.customerName || !payload.customerName.trim()) {
+      return { success: false, error: "Customer name is required for credit sales." };
+    }
+  }
+
   try {
     await connectDB();
 
@@ -663,6 +681,32 @@ export async function createCommunicationSaleBatchAction(payload: {
 
     const recordStatus: "PENDING" | "APPROVED" = isBranchRelated ? "PENDING" : "APPROVED";
     const isLocked = !isBranchRelated;
+
+    // Handle Customer Credit Account if CREDIT sale
+    let customerCreditDoc: any = null;
+    if (isCredit) {
+      const cleanPhone = payload.customerPhone!.trim();
+      const cleanName = payload.customerName!.trim();
+
+      customerCreditDoc = await CustomerCredit.findOne({
+        shop: shop._id,
+        phone: cleanPhone,
+      });
+
+      if (!customerCreditDoc) {
+        customerCreditDoc = await CustomerCredit.create({
+          shop: shop._id,
+          name: cleanName,
+          phone: cleanPhone,
+          totalCredit: 0,
+          totalPaid: 0,
+          currentBalance: 0,
+          lastActivityDate: new Date(),
+        });
+      } else if (cleanName && customerCreditDoc.name !== cleanName) {
+        customerCreditDoc.name = cleanName;
+      }
+    }
 
     // Find or create "Communication Items" INCOME category
     let category = await Category.findOne({
@@ -709,20 +753,29 @@ export async function createCommunicationSaleBatchAction(payload: {
         ? Number(item.sellingPrice)
         : (item.quantity > 0 ? Number((item.totalPrice / item.quantity).toFixed(2)) : item.totalPrice);
 
+      const recordReason = isCredit
+        ? `Credit Sale to ${customerCreditDoc.name} (${customerCreditDoc.phone}): ${item.itemName} (${item.quantity} ${item.quantity === 1 ? "unit" : "units"})`
+        : `Retail Sale: ${item.itemName} (${item.quantity} ${item.quantity === 1 ? "unit" : "units"})`;
+
       await FinanceRecord.create({
         date: now,
         shop: shop._id,
         category: category?._id || null,
-        paymentMethod: "CASH",
-        bankAccount: null,
+        paymentMethod,
+        bankAccount: paymentMethod === "BANK_TRANSFER" && payload.bankAccountId ? new mongoose.Types.ObjectId(payload.bankAccountId) : null,
         billNumber,
-        reason: `Retail Sale: ${item.itemName} (${item.quantity} ${item.quantity === 1 ? "unit" : "units"})`,
+        reason: recordReason,
         amount: netAmount,
         type: "INCOME",
         status: recordStatus,
         approvedAmount: isBranchRelated ? null : netAmount,
         runningBalance: 0,
         isLocked,
+
+        // Customer Credit fields
+        customerCredit: customerCreditDoc?._id || null,
+        customerName: customerCreditDoc?.name || payload.customerName || null,
+        customerPhone: customerCreditDoc?.phone || payload.customerPhone || null,
 
         // Communication fields
         isCommunicationItem: true,
@@ -739,6 +792,26 @@ export async function createCommunicationSaleBatchAction(payload: {
 
         isDeleted: false,
         createdBy: new mongoose.Types.ObjectId(session.user.id),
+      });
+    }
+
+    // Update Customer Credit Account and log Credit Transaction if CREDIT sale
+    if (isCredit && customerCreditDoc) {
+      customerCreditDoc.totalCredit += grandTotal;
+      customerCreditDoc.currentBalance += grandTotal;
+      customerCreditDoc.lastActivityDate = now;
+      await customerCreditDoc.save();
+
+      await CreditTransaction.create({
+        customerCredit: customerCreditDoc._id,
+        shop: shop._id,
+        type: "CREDIT_SALE",
+        amount: grandTotal,
+        paymentMethod: "CREDIT",
+        billNumber,
+        note: `Credit Sale: ${payload.items.map((i) => i.itemName).join(", ")}`,
+        recordedBy: new mongoose.Types.ObjectId(session.user.id),
+        date: now,
       });
     }
 

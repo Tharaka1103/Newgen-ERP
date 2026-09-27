@@ -2,6 +2,7 @@ import { z } from "zod";
 
 export const paymentMethodEnum = z.enum([
   "CASH",
+  "CREDIT",
   "BANK_TRANSFER",
   "CHEQUE",
   "ONLINE",
@@ -26,6 +27,12 @@ export const createFinanceRecordSchema = z.object({
   reason: z.string().min(2, "Reason must be at least 2 characters"),
   amount: z.number().positive("Amount must be greater than 0"),
   type: transactionTypeEnum,
+
+  // Customer Credit Fields
+  customerCredit: z.string().optional().nullable(),
+  customerName: z.string().optional().nullable(),
+  customerPhone: z.string().optional().nullable(),
+  isDebtRepayment: z.boolean().optional(),
 
   // Communication Shop Fields
   isCommunicationItem: z.boolean().optional(),
@@ -54,6 +61,12 @@ export const updateFinanceRecordSchema = z.object({
   amount: z.number().positive("Amount must be greater than 0"),
   type: transactionTypeEnum,
 
+  // Customer Credit Fields
+  customerCredit: z.string().optional().nullable(),
+  customerName: z.string().optional().nullable(),
+  customerPhone: z.string().optional().nullable(),
+  isDebtRepayment: z.boolean().optional(),
+
   // Communication Shop Fields
   isCommunicationItem: z.boolean().optional(),
   communicationItem: z.string().optional().nullable(),
@@ -69,6 +82,17 @@ export const updateFinanceRecordSchema = z.object({
 });
 
 export type UpdateFinanceRecordInput = z.infer<typeof updateFinanceRecordSchema>;
+
+export const repayCustomerDebtSchema = z.object({
+  shopId: z.string().min(1, "Shop ID is required"),
+  customerCreditId: z.string().min(1, "Customer is required"),
+  amount: z.number().positive("Repayment amount must be greater than 0"),
+  paymentMethod: z.enum(["CASH", "BANK_TRANSFER", "ONLINE", "CHEQUE"]),
+  bankAccountId: z.string().optional().nullable(),
+  note: z.string().optional(),
+});
+
+export type RepayCustomerDebtInput = z.infer<typeof repayCustomerDebtSchema>;
 
 export const adminEditFinanceRecordSchema = z.object({
   recordId: z.string().min(1, "Record ID is required"),

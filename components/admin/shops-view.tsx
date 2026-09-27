@@ -74,6 +74,7 @@ interface ShopItem {
   staffCount: number;
   recordsCount: number;
   currentBalance: number;
+  totalCustomerCredit?: number;
 }
 
 export function ShopsView({ initialShops }: { initialShops: ShopItem[] }) {
@@ -239,13 +240,22 @@ export function ShopsView({ initialShops }: { initialShops: ShopItem[] }) {
     },
     {
       accessorKey: "currentBalance",
-      header: "Current Cash Balance",
+      header: "Cash Balance",
       cell: ({ row }) => {
         const bal = row.original.currentBalance || 0;
+        const credit = row.original.totalCustomerCredit || 0;
+        const isComm = row.original.shopType === "COMMUNICATION";
         return (
-          <span className={`font-mono text-xs font-semibold ${bal >= 0 ? "text-chart-2" : "text-destructive"}`}>
-            LKR {Number(bal).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-          </span>
+          <div className="flex flex-col gap-0.5">
+            <span className={`font-mono text-xs font-semibold ${bal >= 0 ? "text-chart-2" : "text-destructive"}`}>
+              LKR {Number(bal).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+            </span>
+            {isComm && credit > 0 && (
+              <span className="font-mono text-[10px] text-amber-600 dark:text-amber-400 font-medium">
+                Credit: LKR {Number(credit).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+              </span>
+            )}
+          </div>
         );
       },
     },
@@ -269,10 +279,10 @@ export function ShopsView({ initialShops }: { initialShops: ShopItem[] }) {
         return (
           <div className="flex items-center gap-1.5">
             <Button
-              variant="outline"
+              variant="default"
               size="xs"
               onClick={() => router.push(`/dashboard/admin/shops/${shop._id}`)}
-              className="gap-1 text-xs text-primary hover:text-primary font-medium"
+              className="gap-1 text-xs font-medium"
               title="View Branch Analytics & Summary"
             >
               <EyeIcon className="size-3.5" />

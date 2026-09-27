@@ -11,6 +11,10 @@ import {
   deleteCommunicationItemAction,
   getCommunicationAnalyticsAction,
 } from "@/actions/communication";
+import {
+  getShopCreditCustomersAction,
+  getCustomerCreditStatementAction,
+} from "@/actions/credit";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
@@ -67,6 +71,12 @@ import {
   TrendingUpIcon,
   SparklesIcon,
   Loader2Icon,
+  HandCoinsIcon,
+  WalletIcon,
+  CreditCardIcon,
+  FileTextIcon,
+  CheckCircle2Icon,
+  SearchIcon,
 } from "lucide-react";
 import { toast } from "@/components/ui/toast";
 import { useForm } from "react-hook-form";
@@ -103,6 +113,8 @@ interface SingleShopViewProps {
     pendingCount: number;
     approvedCount: number;
     currentBalance: number;
+    totalCustomerCredit?: number;
+    creditCustomerCount?: number;
   };
 }
 
@@ -113,7 +125,7 @@ export function SingleShopView({
 }: SingleShopViewProps) {
   const isCommunication = initialShop.shopType === "COMMUNICATION";
 
-  const [activeTab, setActiveTab] = React.useState<"overview" | "items" | "staff">("overview");
+  const [activeTab, setActiveTab] = React.useState<"overview" | "items" | "credits" | "staff">("overview");
   const [period, setPeriod] = React.useState<"today" | "week" | "month" | "year" | "custom">("month");
   const [startDate, setStartDate] = React.useState<string>("");
   const [endDate, setEndDate] = React.useState<string>("");
@@ -123,6 +135,30 @@ export function SingleShopView({
   const [shop, setShop] = React.useState(initialShop);
   const [staff, setStaff] = React.useState<AssignedStaff[]>(initialStaff);
   const [stats, setStats] = React.useState(initialStats);
+
+  // Credit Customers & Debt Ledger State
+  const [creditCustomers, setCreditCustomers] = React.useState<any[]>([]);
+  const [creditStats, setCreditStats] = React.useState<{
+    totalCreditIssued: number;
+    totalPaid: number;
+    totalOutstanding: number;
+    debtorCount: number;
+  }>({
+    totalCreditIssued: 0,
+    totalPaid: 0,
+    totalOutstanding: initialStats.totalCustomerCredit || 0,
+    debtorCount: initialStats.creditCustomerCount || 0,
+  });
+  const [creditSearch, setCreditSearch] = React.useState("");
+  const [creditLoading, setCreditLoading] = React.useState(false);
+
+  // Statement Dialog State
+  const [statementOpen, setStatementOpen] = React.useState(false);
+  const [statementLoading, setStatementLoading] = React.useState(false);
+  const [customerStatement, setCustomerStatement] = React.useState<{
+    customer: any;
+    transactions: any[];
+  } | null>(null);
 
   // Communication Items State
   const [commItems, setCommItems] = React.useState<any[]>([]);
@@ -233,9 +269,9 @@ export function SingleShopView({
         }
       }
 
-      // If communication, also fetch items & communication analytics
+      // If communication, also fetch items, communication analytics & customer credits
       if (isCommunication) {
-        const [itemsRes, commAnalyticsRes] = await Promise.all([
+        const [itemsRes, commAnalyticsRes, creditRes] = await Promise.all([
           getCommunicationItemsAction(shop._id),
           getCommunicationAnalyticsAction({
             shopId: shop._id,
@@ -244,6 +280,7 @@ export function SingleShopView({
             endDate: period === "custom" ? endDate : undefined,
             itemCodeFilter: itemFilter,
           }),
+          getShopCreditCustomersAction(shop._id, creditSearch),
         ]);
 
         if (itemsRes.success) setCommItems(itemsRes.items || []);
@@ -259,6 +296,12 @@ export function SingleShopView({
             itemBreakdown: commAnalyticsRes.itemBreakdown || [],
           });
         }
+        if (creditRes.success && creditRes.customers) {
+          setCreditCustomers(creditRes.customers);
+          if (creditRes.stats) {
+            setCreditStats(creditRes.stats);
+          }
+        }
       }
     } catch (err) {
       console.error("Failed to load shop analytics:", err);
@@ -270,11 +313,65 @@ export function SingleShopView({
     } finally {
       setLoading(false);
     }
-  }, [period, startDate, endDate, itemFilter, shop._id, isCommunication]);
+  }, [period, startDate, endDate, itemFilter, shop._id, isCommunication, creditSearch]);
+
+  const fetchCreditCustomers = React.useCallback(async (searchQuery?: string) => {
+    if (!isCommunication) return;
+    setCreditLoading(true);
+    try {
+      const query = searchQuery !== undefined ? searchQuery : creditSearch;
+      const res = await getShopCreditCustomersAction(shop._id, query);
+      if (res.success && res.customers) {
+        setCreditCustomers(res.customers);
+        if (res.stats) {
+          setCreditStats(res.stats);
+        }
+      }
+    } catch (err) {
+      console.error("Failed to load credit customers:", err);
+    } finally {
+      setCreditLoading(false);
+    }
+  }, [isCommunication, shop._id, creditSearch]);
+
+  const handleOpenStatement = async (customerId: string) => {
+    setStatementLoading(true);
+    setStatementOpen(true);
+    setCustomerStatement(null);
+    try {
+      const res = await getCustomerCreditStatementAction(customerId);
+      if (res.success && res.customer && res.transactions) {
+        setCustomerStatement({
+          customer: res.customer,
+          transactions: res.transactions,
+        });
+      } else {
+        toast.create({
+          title: "Statement Failed",
+          description: res.error || "Failed to load statement",
+          type: "error",
+        });
+      }
+    } catch {
+      toast.create({
+        title: "Error",
+        description: "An unexpected error occurred while loading customer statement.",
+        type: "error",
+      });
+    } finally {
+      setStatementLoading(false);
+    }
+  };
 
   React.useEffect(() => {
     fetchShopData();
   }, [fetchShopData]);
+
+  React.useEffect(() => {
+    if (activeTab === "credits") {
+      fetchCreditCustomers();
+    }
+  }, [activeTab]);
 
   // Item Management Handlers
   const onAddItem = async (data: CreateCommunicationItemInput) => {
@@ -633,6 +730,92 @@ export function SingleShopView({
     },
   ];
 
+  // Table Columns for Customer Credit Ledger
+  const creditColumns: ColumnDef<any>[] = [
+    {
+      accessorKey: "name",
+      header: "Customer",
+      cell: ({ row }) => (
+        <div className="flex flex-col">
+          <span className="font-semibold text-xs text-foreground">{row.original.name}</span>
+          <span className="text-[11px] font-mono text-muted-foreground">{row.original.phone}</span>
+        </div>
+      ),
+    },
+    {
+      accessorKey: "totalCredit",
+      header: "Total Credit Taken",
+      cell: ({ row }) => (
+        <span className="font-mono text-xs text-muted-foreground">
+          LKR {Number(row.original.totalCredit || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+        </span>
+      ),
+    },
+    {
+      accessorKey: "totalPaid",
+      header: "Total Repaid",
+      cell: ({ row }) => (
+        <span className="font-mono text-xs text-emerald-600 dark:text-emerald-400 font-semibold">
+          LKR {Number(row.original.totalPaid || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+        </span>
+      ),
+    },
+    {
+      accessorKey: "currentBalance",
+      header: "Outstanding Debt",
+      cell: ({ row }) => {
+        const debt = row.original.currentBalance || 0;
+        return (
+          <span className={`font-mono text-xs font-bold ${debt > 0 ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground"}`}>
+            LKR {Number(debt).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+          </span>
+        );
+      },
+    },
+    {
+      accessorKey: "status",
+      header: "Status",
+      cell: ({ row }) => {
+        const debt = row.original.currentBalance || 0;
+        return debt > 0 ? (
+          <Badge variant="outline" className="text-[10px] border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400 font-semibold">
+            Pending
+          </Badge>
+        ) : (
+          <Badge variant="secondary" className="text-[10px] bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 font-semibold">
+            Settled
+          </Badge>
+        );
+      },
+    },
+    {
+      accessorKey: "lastActivityDate",
+      header: "Last Activity",
+      cell: ({ row }) => (
+        <span className="font-mono text-xs text-muted-foreground">
+          {row.original.lastActivityDate
+            ? new Date(row.original.lastActivityDate).toLocaleDateString()
+            : "-"}
+        </span>
+      ),
+    },
+    {
+      id: "actions",
+      header: "Statement",
+      cell: ({ row }) => (
+        <Button
+          variant="default"
+          size="xs"
+          onClick={() => handleOpenStatement(row.original._id)}
+          className="gap-1.5 text-xs font-medium"
+        >
+          <FileTextIcon className="size-3.5" />
+          <span>Statement</span>
+        </Button>
+      ),
+    },
+  ];
+
   return (
     <div className="space-y-6">
       {/* Top Header */}
@@ -716,13 +899,27 @@ export function SingleShopView({
               </Button>
             )}
 
-            <div className="flex flex-col sm:items-end justify-center pl-3 border-l border-border">
-              <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
-                Branch Balance
+            <div className="flex items-center gap-4 pl-3 border-l border-border">
+              <div className="flex flex-col sm:items-end justify-center">
+                <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
+                  Cash Balance
+                </div>
+                <div className={`text-xl font-bold font-mono ${stats.currentBalance >= 0 ? "text-chart-2" : "text-destructive"}`}>
+                  LKR {Number(stats.currentBalance || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                </div>
               </div>
-              <div className={`text-xl font-bold font-mono ${stats.currentBalance >= 0 ? "text-chart-2" : "text-destructive"}`}>
-                LKR {Number(stats.currentBalance || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-              </div>
+
+              {isCommunication && (
+                <div className="flex flex-col sm:items-end justify-center pl-4 border-l border-border">
+                  <div className="text-[10px] font-semibold text-amber-700 dark:text-amber-400 uppercase tracking-wider flex items-center gap-1">
+                    <HandCoinsIcon className="size-3" />
+                    <span>Credit Balance</span>
+                  </div>
+                  <div className="text-xl font-bold font-mono text-amber-600 dark:text-amber-400">
+                    LKR {Number(creditStats.totalOutstanding || stats.totalCustomerCredit || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -740,6 +937,11 @@ export function SingleShopView({
                 Items & Inventory ({commItems.length})
               </TabsTrigger>
             )}
+            {isCommunication && (
+              <TabsTrigger value="credits" className="text-xs">
+                Credit Customers ({creditStats.debtorCount || stats.creditCustomerCount || 0})
+              </TabsTrigger>
+            )}
             <TabsTrigger value="staff" className="text-xs">
               Assigned Officers ({staff.length})
             </TabsTrigger>
@@ -748,6 +950,99 @@ export function SingleShopView({
 
         {/* OVERVIEW TAB CONTENT */}
         <TabsContent value="overview" className="space-y-6 mt-0">
+          {/* Current Financial Balances Overview */}
+          <div className="grid gap-4 grid-cols-1 sm:grid-cols-2">
+            <Card className="relative overflow-hidden border-border bg-gradient-to-br from-card to-emerald-500/5 p-4 shadow-sm hover:shadow-md transition-all">
+              <div className="flex items-start justify-between">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+                      <WalletIcon className="size-5" />
+                    </div>
+                    <div>
+                      <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                        Current Cash Balance
+                      </h4>
+                      <p className="text-[11px] text-muted-foreground">
+                        Physical cash available in shop drawer
+                      </p>
+                    </div>
+                  </div>
+                  <div className={`mt-3 text-2xl sm:text-3xl font-bold font-mono tracking-tight ${stats.currentBalance >= 0 ? "text-chart-2" : "text-destructive"}`}>
+                    LKR {Number(stats.currentBalance || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  </div>
+                </div>
+                <Badge variant="outline" className="font-mono text-[10px] bg-background/50 border-emerald-500/30 text-emerald-600 dark:text-emerald-400">
+                  Cash In Hand
+                </Badge>
+              </div>
+            </Card>
+
+            {isCommunication ? (
+              <Card className="relative overflow-hidden border-amber-500/30 bg-gradient-to-br from-card to-amber-500/5 p-4 shadow-sm hover:shadow-md transition-all">
+                <div className="flex items-start justify-between">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <div className="p-2 rounded-lg bg-amber-500/15 text-amber-600 dark:text-amber-400">
+                        <HandCoinsIcon className="size-5" />
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-semibold text-amber-700 dark:text-amber-400 uppercase tracking-wider">
+                          Outstanding Credit Balance
+                        </h4>
+                        <p className="text-[11px] text-muted-foreground">
+                          Total customer credit debt owed
+                        </p>
+                      </div>
+                    </div>
+                    <div className="mt-3 text-2xl sm:text-3xl font-bold font-mono tracking-tight text-amber-600 dark:text-amber-400">
+                      LKR {Number(creditStats.totalOutstanding || stats.totalCustomerCredit || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    </div>
+                  </div>
+                  <div className="flex flex-col items-end gap-1.5">
+                    <Badge variant="outline" className="font-mono text-[10px] bg-background/50 border-amber-500/30 text-amber-700 dark:text-amber-400">
+                      {creditStats.debtorCount || stats.creditCustomerCount || 0} Debtor{(creditStats.debtorCount || stats.creditCustomerCount) !== 1 ? "s" : ""}
+                    </Badge>
+                    <Button
+                      variant="ghost"
+                      size="xs"
+                      onClick={() => setActiveTab("credits")}
+                      className="text-xs text-amber-700 dark:text-amber-400 hover:text-amber-800 hover:bg-amber-500/10 h-7 px-2"
+                    >
+                      View Ledger →
+                    </Button>
+                  </div>
+                </div>
+              </Card>
+            ) : (
+              <Card className="relative overflow-hidden border-border bg-gradient-to-br from-card to-primary/5 p-4 shadow-sm hover:shadow-md transition-all">
+                <div className="flex items-start justify-between">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <div className="p-2 rounded-lg bg-primary/10 text-primary">
+                        <ReceiptIcon className="size-5" />
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                          All-Time Transactions
+                        </h4>
+                        <p className="text-[11px] text-muted-foreground">
+                          Total finance entries registered
+                        </p>
+                      </div>
+                    </div>
+                    <div className="mt-3 text-2xl sm:text-3xl font-bold font-mono tracking-tight text-foreground">
+                      {stats.recordsCount || 0} Records
+                    </div>
+                  </div>
+                  <Badge variant="outline" className="font-mono text-[10px] bg-background/50">
+                    {stats.approvedCount || 0} Approved
+                  </Badge>
+                </div>
+              </Card>
+            )}
+          </div>
+
           {/* Filter & Period Selector Bar */}
           <div className="flex flex-col gap-4 rounded-xl border border-border bg-card p-4 shadow-sm md:flex-row md:items-center md:justify-between">
             <div className="flex flex-wrap items-center gap-3">
@@ -1030,6 +1325,142 @@ export function SingleShopView({
           </TabsContent>
         )}
 
+        {/* CUSTOMER CREDIT & DEBT LEDGER TAB CONTENT */}
+        {isCommunication && (
+          <TabsContent value="credits" className="space-y-6 mt-0">
+            {/* Top Stat Cards */}
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <Card className="border-border bg-card shadow-xs">
+                <CardHeader className="flex flex-row items-center justify-between pb-2">
+                  <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                    Outstanding Debt
+                  </span>
+                  <div className="p-2 rounded-lg bg-amber-500/10 text-amber-600 dark:text-amber-400">
+                    <HandCoinsIcon className="size-4" />
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-2xl font-bold font-mono text-amber-600 dark:text-amber-400">
+                    LKR {Number(creditStats.totalOutstanding || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  </div>
+                  <p className="text-[11px] text-muted-foreground mt-1">
+                    {creditStats.debtorCount} Customer{creditStats.debtorCount !== 1 ? "s" : ""} with pending balances
+                  </p>
+                </CardContent>
+              </Card>
+
+              <Card className="border-border bg-card shadow-xs">
+                <CardHeader className="flex flex-row items-center justify-between pb-2">
+                  <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                    Total Credit Issued
+                  </span>
+                  <div className="p-2 rounded-lg bg-blue-500/10 text-blue-600 dark:text-blue-400">
+                    <CreditCardIcon className="size-4" />
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-2xl font-bold font-mono text-foreground">
+                    LKR {Number(creditStats.totalCreditIssued || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  </div>
+                  <p className="text-[11px] text-muted-foreground mt-1">
+                    Cumulative credit purchases logged
+                  </p>
+                </CardContent>
+              </Card>
+
+              <Card className="border-border bg-card shadow-xs">
+                <CardHeader className="flex flex-row items-center justify-between pb-2">
+                  <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                    Total Repaid
+                  </span>
+                  <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+                    <TrendingUpIcon className="size-4" />
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-2xl font-bold font-mono text-emerald-600 dark:text-emerald-400">
+                    LKR {Number(creditStats.totalPaid || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  </div>
+                  <p className="text-[11px] text-muted-foreground mt-1">
+                    Recovered directly into branch cash
+                  </p>
+                </CardContent>
+              </Card>
+
+              <Card className="border-border bg-card shadow-xs">
+                <CardHeader className="flex flex-row items-center justify-between pb-2">
+                  <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                    Recovery Rate
+                  </span>
+                  <div className="p-2 rounded-lg bg-purple-500/10 text-purple-600 dark:text-purple-400">
+                    <SparklesIcon className="size-4" />
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-2xl font-bold font-mono text-foreground">
+                    {creditStats.totalCreditIssued > 0
+                      ? ((creditStats.totalPaid / creditStats.totalCreditIssued) * 100).toFixed(1)
+                      : "0.0"}%
+                  </div>
+                  <p className="text-[11px] text-muted-foreground mt-1">
+                    Percentage of credit collected
+                  </p>
+                </CardContent>
+              </Card>
+            </div>
+
+            {/* Header & Search */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <h3 className="text-base font-semibold text-foreground flex items-center gap-2">
+                  <span>Customer Credit Accounts</span>
+                  <Badge variant="outline" className="text-xs font-mono">
+                    {creditCustomers.length} Total
+                  </Badge>
+                </h3>
+                <p className="text-xs text-muted-foreground">
+                  Track individual customer debt, repayments, and print or view detailed transaction statements
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <div className="relative w-64">
+                  <SearchIcon className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
+                  <Input
+                    placeholder="Filter by name or phone..."
+                    value={creditSearch}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setCreditSearch(val);
+                      fetchCreditCustomers(val);
+                    }}
+                    className="pl-8 h-8 text-xs font-mono"
+                  />
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => fetchCreditCustomers()}
+                  className="gap-1.5 text-xs h-8"
+                  disabled={creditLoading}
+                >
+                  <RefreshCwIcon className={`size-3.5 ${creditLoading ? "animate-spin" : ""}`} />
+                  Refresh
+                </Button>
+              </div>
+            </div>
+
+            {/* Customers Table */}
+            <DataTable
+              columns={creditColumns}
+              data={creditCustomers}
+              searchKey="name"
+              searchPlaceholder="Filter credit customers..."
+              loading={creditLoading}
+            />
+          </TabsContent>
+        )}
+
         {/* STAFF TAB CONTENT */}
         <TabsContent value="staff" className="space-y-4 mt-0">
           <div className="rounded-xl border border-border bg-card p-4 space-y-3 shadow-sm">
@@ -1184,6 +1615,133 @@ export function SingleShopView({
               </Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* CUSTOMER CREDIT STATEMENT MODAL */}
+      <Dialog open={statementOpen} onOpenChange={setStatementOpen}>
+        <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-base">
+              <FileTextIcon className="size-4 text-primary" />
+              <span>Customer Credit Statement</span>
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+              Complete history of purchases and debt settlements for this customer.
+            </DialogDescription>
+          </DialogHeader>
+
+          {statementLoading ? (
+            <div className="py-12 flex flex-col items-center justify-center gap-2 text-xs text-muted-foreground">
+              <Loader2Icon className="size-6 animate-spin text-primary" />
+              <span>Loading customer ledger transactions...</span>
+            </div>
+          ) : customerStatement ? (
+            <div className="space-y-4 py-1">
+              {/* Customer Profile Banner */}
+              <div className="p-3.5 rounded-xl border border-border bg-card flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
+                <div>
+                  <h4 className="text-sm font-bold text-foreground">{customerStatement.customer.name}</h4>
+                  <p className="text-xs font-mono text-muted-foreground">
+                    Mobile: {customerStatement.customer.phone}
+                  </p>
+                  {customerStatement.customer.notes && (
+                    <p className="text-[11px] text-muted-foreground mt-1">
+                      Note: {customerStatement.customer.notes}
+                    </p>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <div className="text-right">
+                    <span className="text-[10px] uppercase font-semibold text-muted-foreground block">Total Credit</span>
+                    <span className="text-xs font-mono font-semibold text-foreground">
+                      LKR {Number(customerStatement.customer.totalCredit).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                  <div className="text-right">
+                    <span className="text-[10px] uppercase font-semibold text-muted-foreground block">Total Paid</span>
+                    <span className="text-xs font-mono font-semibold text-emerald-600 dark:text-emerald-400">
+                      LKR {Number(customerStatement.customer.totalPaid).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                  <div className="text-right pl-3 border-l border-border">
+                    <span className="text-[10px] uppercase font-semibold text-muted-foreground block">Current Debt</span>
+                    <span className="text-sm font-mono font-bold text-amber-600 dark:text-amber-400">
+                      LKR {Number(customerStatement.customer.currentBalance).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Transactions Ledger Table */}
+              <div className="rounded-xl border border-border overflow-hidden">
+                <table className="w-full text-xs">
+                  <thead className="bg-muted/50 border-b border-border text-[11px] font-semibold text-muted-foreground">
+                    <tr>
+                      <th className="py-2 px-3 text-left">Date</th>
+                      <th className="py-2 px-3 text-left">Type</th>
+                      <th className="py-2 px-3 text-left">Bill / Ref</th>
+                      <th className="py-2 px-3 text-left">Method / Account</th>
+                      <th className="py-2 px-3 text-right">Amount (LKR)</th>
+                      <th className="py-2 px-3 text-left">Recorded By</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border font-mono">
+                    {customerStatement.transactions && customerStatement.transactions.length > 0 ? (
+                      customerStatement.transactions.map((t) => {
+                        const isRepay = t.type === "REPAYMENT";
+                        return (
+                          <tr key={t._id} className="hover:bg-muted/30">
+                            <td className="py-2 px-3 text-muted-foreground">
+                              {new Date(t.date).toLocaleDateString()}
+                            </td>
+                            <td className="py-2 px-3 font-sans">
+                              {isRepay ? (
+                                <Badge variant="secondary" className="text-[10px] bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20 font-semibold">
+                                  Repay
+                                </Badge>
+                              ) : (
+                                <Badge variant="outline" className="text-[10px] border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-400 font-semibold">
+                                  Sale
+                                </Badge>
+                              )}
+                            </td>
+                            <td className="py-2 px-3 text-primary font-semibold">
+                              {t.billNumber || "-"}
+                            </td>
+                            <td className="py-2 px-3 text-muted-foreground font-sans">
+                              <div>{t.paymentMethod}</div>
+                              {t.bankAccount && <div className="text-[10px] font-mono">{t.bankAccount}</div>}
+                            </td>
+                            <td className={`py-2 px-3 text-right font-bold ${isRepay ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}`}>
+                              {isRepay ? "-" : "+"} {Number(t.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                            </td>
+                            <td className="py-2 px-3 text-muted-foreground font-sans text-[11px]">
+                              <div>{t.recordedBy}</div>
+                              {t.note && <div className="text-[10px] text-muted-foreground truncate max-w-[120px]">{t.note}</div>}
+                            </td>
+                          </tr>
+                        );
+                      })
+                    ) : (
+                      <tr>
+                        <td colSpan={6} className="py-8 text-center text-xs text-muted-foreground font-sans">
+                          No transactions recorded for this customer yet.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ) : null}
+
+          <DialogFooter className="pt-2">
+            <Button type="button" variant="outline" size="sm" onClick={() => setStatementOpen(false)}>
+              Close Statement
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

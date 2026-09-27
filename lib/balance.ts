@@ -16,52 +16,37 @@ import mongoose from "mongoose";
  */
 export async function recalculateShopRunningBalance(
   shopId: string | mongoose.Types.ObjectId,
-  startDate?: Date | null
+  _startDate?: Date | null
 ): Promise<void> {
   await connectDB();
   const shopObjId = new mongoose.Types.ObjectId(shopId.toString());
 
-  let initialBalance = 0;
-
-  // If a startDate is specified, find the running balance of the active record immediately preceding startDate
-  if (startDate) {
-    const previousRecord = await FinanceRecord.findOne({
-      shop: shopObjId,
-      isDeleted: { $ne: true },
-      $or: [
-        { date: { $lt: startDate } },
-        { date: startDate, createdAt: { $lt: new Date() } },
-      ],
-    })
-      .sort({ date: -1, createdAt: -1 })
-      .select("runningBalance")
-      .lean();
-
-    if (previousRecord) {
-      initialBalance = previousRecord.runningBalance || 0;
-    }
-  }
-
-  const query: Record<string, unknown> = {
+  const records = await FinanceRecord.find({
     shop: shopObjId,
     isDeleted: { $ne: true },
-  };
-
-  if (startDate) {
-    query.date = { $gte: startDate };
-  }
-
-  const records = await FinanceRecord.find(query)
+  })
     .sort({ date: 1, createdAt: 1 })
-    .select("_id type status amount approvedAmount runningBalance");
+    .select("_id type status amount approvedAmount runningBalance paymentMethod");
 
   if (!records.length) return;
 
   const bulkOps = [];
-  let currentBalance = initialBalance;
+  let currentBalance = 0;
 
   for (const record of records) {
     if (record.status === "REJECTED") {
+      bulkOps.push({
+        updateOne: {
+          filter: { _id: record._id },
+          update: { $set: { runningBalance: currentBalance } },
+        },
+      });
+      continue;
+    }
+
+    // CREDIT sales do not increase shop physical cash balance;
+    // only subsequent cash debt repayments enter the shop cash balance.
+    if (record.paymentMethod === "CREDIT") {
       bulkOps.push({
         updateOne: {
           filter: { _id: record._id },
@@ -93,4 +78,55 @@ export async function recalculateShopRunningBalance(
   if (bulkOps.length > 0) {
     await FinanceRecord.bulkWrite(bulkOps);
   }
+}
+
+/**
+ * Calculates the exact physical cash balance for a shop.
+ * Excludes soft-deleted records, rejected records, and unpaid credit sales.
+ * Takes into account approved amount for approved records and submitted amount for pending records.
+ */
+export async function getShopCashBalance(
+  shopId: string | mongoose.Types.ObjectId
+): Promise<number> {
+  await connectDB();
+  const shopObjId = new mongoose.Types.ObjectId(shopId.toString());
+
+  const balanceAgg = await FinanceRecord.aggregate([
+    {
+      $match: {
+        shop: shopObjId,
+        isDeleted: { $ne: true },
+        status: { $ne: "REJECTED" },
+        paymentMethod: { $ne: "CREDIT" },
+      },
+    },
+    {
+      $project: {
+        effectiveAmount: {
+          $cond: [
+            { $and: [{ $eq: ["$status", "APPROVED"] }, { $ne: ["$approvedAmount", null] }] },
+            "$approvedAmount",
+            "$amount",
+          ],
+        },
+        type: 1,
+      },
+    },
+    {
+      $group: {
+        _id: null,
+        balance: {
+          $sum: {
+            $cond: [
+              { $eq: ["$type", "INCOME"] },
+              "$effectiveAmount",
+              { $multiply: ["$effectiveAmount", -1] },
+            ],
+          },
+        },
+      },
+    },
+  ]);
+
+  return balanceAgg.length > 0 ? balanceAgg[0].balance : 0;
 }
