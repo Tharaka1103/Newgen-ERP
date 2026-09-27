@@ -9,6 +9,7 @@ export const createCommunicationItemSchema = z.object({
     .toUpperCase(),
   name: z.string().min(2, "Item name must be at least 2 characters"),
   actualPrice: z.number().min(0, "Unit cost price cannot be negative"),
+  sellingPrice: z.number().min(0, "Selling unit price cannot be negative"),
   description: z.string().optional().or(z.literal("")),
 });
 
@@ -23,6 +24,7 @@ export const updateCommunicationItemSchema = z.object({
     .toUpperCase(),
   name: z.string().min(2, "Item name must be at least 2 characters"),
   actualPrice: z.number().min(0, "Unit cost price cannot be negative"),
+  sellingPrice: z.number().min(0, "Selling unit price cannot be negative"),
   description: z.string().optional().or(z.literal("")),
   isActive: z.boolean(),
 });

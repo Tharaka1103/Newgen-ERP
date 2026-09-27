@@ -109,8 +109,8 @@ interface CommunicationItemOption {
   _id: string;
   itemCode: string;
   name: string;
-  actualPrice: number;
-  sellingPrice: number;
+  actualPrice?: number;
+  sellingPrice?: number;
 }
 
 interface FinancesViewProps {
@@ -401,9 +401,7 @@ export function FinancesView({
     if (found) {
       setMatchedItem(found);
       setIsUnlistedItem(false);
-      if (found.sellingPrice && found.sellingPrice > 0) {
-        setCommUnitPrice(found.sellingPrice);
-      }
+      setCommUnitPrice(found.sellingPrice || 0);
     } else {
       setMatchedItem(null);
     }
@@ -445,19 +443,23 @@ export function FinancesView({
       return;
     }
 
-    if (commUnitPrice <= 0) {
+    const effectiveUnitPrice = isUnlistedItem ? commUnitPrice : (matchedItem?.sellingPrice || 0);
+
+    if (effectiveUnitPrice <= 0) {
       toast.create({
-        title: "Invalid Unit Price",
-        description: "Unit price for item must be greater than zero.",
+        title: "No Selling Price Configured",
+        description: isUnlistedItem
+          ? "Please specify a unit selling price for this custom item."
+          : `Item "${matchedItem?.name || itemCode}" does not have a selling price configured in inventory.`,
         type: "error",
       });
       return;
     }
 
-    const calculatedTotal = commQuantity * commUnitPrice;
+    const calculatedTotal = commQuantity * effectiveUnitPrice;
     const discount = Math.max(0, commDiscountPrice || 0);
     const net = Math.max(0, calculatedTotal - discount);
-    const actualPrice = isUnlistedItem ? (commCustomCostPrice || 0) : (matchedItem?.actualPrice || 0);
+    const actualPrice = 0; // Resolved on server from registered item
 
     const newItem: CommCartItem = {
       id: `${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
@@ -465,7 +467,7 @@ export function FinancesView({
       itemCode,
       itemName,
       actualPrice,
-      sellingPrice: commUnitPrice,
+      sellingPrice: effectiveUnitPrice,
       quantity: commQuantity,
       totalPrice: calculatedTotal,
       discountPrice: discount,
@@ -520,19 +522,20 @@ export function FinancesView({
         ? (commItemLookup.trim().toUpperCase() || "CUSTOM")
         : (matchedItem?.itemCode || commItemLookup.trim().toUpperCase());
 
-      if (itemName && commUnitPrice > 0) {
-        const calculatedTotal = (commQuantity || 1) * commUnitPrice;
+      const effectiveUnitPrice = isUnlistedItem ? commUnitPrice : (matchedItem?.sellingPrice || 0);
+
+      if (itemName && effectiveUnitPrice > 0) {
+        const calculatedTotal = (commQuantity || 1) * effectiveUnitPrice;
         const discount = Math.max(0, commDiscountPrice || 0);
         const net = Math.max(0, calculatedTotal - discount);
-        const actualPrice = isUnlistedItem ? (commCustomCostPrice || 0) : (matchedItem?.actualPrice || 0);
 
         finalItems.push({
           id: `${Date.now()}`,
           communicationItem: matchedItem?._id || null,
           itemCode,
           itemName,
-          actualPrice,
-          sellingPrice: commUnitPrice,
+          actualPrice: 0,
+          sellingPrice: effectiveUnitPrice,
           quantity: commQuantity || 1,
           totalPrice: calculatedTotal,
           discountPrice: discount,
@@ -1168,7 +1171,7 @@ export function FinancesView({
                       <datalist id="comm-items-datalist">
                         {communicationItems.map((item) => (
                           <option key={item._id} value={item.itemCode}>
-                            {item.name} - (Cost: LKR {item.actualPrice})
+                            {item.name} {item.sellingPrice ? `- (Price: LKR ${item.sellingPrice})` : ""}
                           </option>
                         ))}
                       </datalist>
@@ -1181,9 +1184,11 @@ export function FinancesView({
                           <CheckCircle2Icon className="size-4 text-emerald-600 dark:text-emerald-400" />
                           <div>
                             <span className="font-semibold text-foreground">{matchedItem.name}</span>
-                            <span className="text-muted-foreground ml-2 font-mono text-[11px]">
-                              (Cost: LKR {Number(matchedItem.actualPrice || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })})
-                            </span>
+                            {matchedItem.sellingPrice !== undefined && matchedItem.sellingPrice > 0 && (
+                              <span className="text-muted-foreground ml-2 font-mono text-[11px]">
+                                (Selling Price: LKR {Number(matchedItem.sellingPrice).toLocaleString(undefined, { minimumFractionDigits: 2 })})
+                              </span>
+                            )}
                           </div>
                         </div>
                         <Badge variant="outline" className="text-[10px] font-mono">
@@ -1218,17 +1223,16 @@ export function FinancesView({
                         />
                       </div>
                       <div className="space-y-1">
-                        <label className="text-[11px] font-semibold text-muted-foreground uppercase flex items-center justify-between">
-                          <span>Unit Cost Price (LKR) *</span>
-                          <span className="text-[10px] text-muted-foreground font-normal lowercase">(for profit)</span>
+                        <label className="text-[11px] font-semibold text-muted-foreground uppercase">
+                          Unit Selling Price (LKR) *
                         </label>
                         <Input
                           type="number"
                           min="0"
                           step="any"
                           placeholder="0.00"
-                          value={commCustomCostPrice || ""}
-                          onChange={(e) => setCommCustomCostPrice(Math.max(0, Number(e.target.value) || 0))}
+                          value={commUnitPrice || ""}
+                          onChange={(e) => setCommUnitPrice(Math.max(0, Number(e.target.value) || 0))}
                           className="h-9 text-xs font-mono font-semibold"
                         />
                       </div>
@@ -1236,8 +1240,8 @@ export function FinancesView({
                   </div>
                 )}
 
-                {/* QUANTITY, UNIT PRICE, DISCOUNT, NET */}
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-1">
+                {/* QUANTITY, DISCOUNT, NET TOTAL */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
                   <div className="space-y-1">
                     <label className="text-[11px] font-semibold text-muted-foreground uppercase">
                       Quantity *
@@ -1249,21 +1253,6 @@ export function FinancesView({
                       placeholder="1"
                       value={commQuantity}
                       onChange={(e) => setCommQuantity(Math.max(1, parseInt(e.target.value) || 1))}
-                      className="h-9 text-xs font-mono font-semibold"
-                    />
-                  </div>
-
-                  <div className="space-y-1">
-                    <label className="text-[11px] font-semibold text-muted-foreground uppercase">
-                      Unit Price (LKR) *
-                    </label>
-                    <Input
-                      type="number"
-                      min="0"
-                      step="any"
-                      placeholder="0.00"
-                      value={commUnitPrice || ""}
-                      onChange={(e) => setCommUnitPrice(Math.max(0, Number(e.target.value) || 0))}
                       className="h-9 text-xs font-mono font-semibold"
                     />
                   </div>
@@ -1284,11 +1273,16 @@ export function FinancesView({
                   </div>
 
                   <div className="space-y-1">
-                    <label className="text-[11px] font-semibold text-muted-foreground uppercase">
-                      Net Total (LKR)
+                    <label className="text-[11px] font-semibold text-muted-foreground uppercase flex items-center justify-between">
+                      <span>Net Total (LKR)</span>
+                      {!isUnlistedItem && matchedItem && matchedItem.sellingPrice !== undefined && (
+                        <span className="text-[10px] text-muted-foreground font-mono font-normal">
+                          (@ LKR {Number(matchedItem.sellingPrice).toLocaleString(undefined, { minimumFractionDigits: 2 })}/unit)
+                        </span>
+                      )}
                     </label>
                     <div className="h-9 px-3 rounded-md border border-border bg-muted/40 flex items-center font-mono text-xs font-bold text-emerald-600 dark:text-emerald-400">
-                      LKR {Math.max(0, (commQuantity * commUnitPrice) - commDiscountPrice).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      LKR {Math.max(0, (commQuantity * (isUnlistedItem ? commUnitPrice : (matchedItem?.sellingPrice || 0))) - commDiscountPrice).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                     </div>
                   </div>
                 </div>
@@ -1347,10 +1341,8 @@ export function FinancesView({
                             <td className="py-2 px-3 text-muted-foreground text-center">{idx + 1}</td>
                             <td className="py-2 px-3 font-sans font-medium text-foreground">
                               <div>{item.itemName}</div>
-                              <div className="text-[10px] text-muted-foreground font-mono flex items-center gap-2">
+                              <div className="text-[10px] text-muted-foreground font-mono">
                                 <span>{item.itemCode || "ITEM"}</span>
-                                <span>•</span>
-                                <span>Unit Cost: LKR {Number(item.actualPrice || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
                               </div>
                             </td>
                             <td className="py-2 px-3 text-right">
@@ -1811,7 +1803,7 @@ export function FinancesView({
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 pt-1">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-1">
                     <div className="space-y-1">
                       <label className="text-[11px] font-semibold text-muted-foreground uppercase">
                         Quantity *
@@ -1835,19 +1827,6 @@ export function FinancesView({
                         placeholder="0.00"
                         {...editForm.register("sellingPrice", { valueAsNumber: true })}
                         className="h-9 text-xs font-mono font-semibold"
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <label className="text-[11px] font-semibold text-muted-foreground uppercase">
-                        Unit Cost (LKR)
-                      </label>
-                      <Input
-                        type="number"
-                        min="0"
-                        step="any"
-                        placeholder="0.00"
-                        {...editForm.register("actualPrice", { valueAsNumber: true })}
-                        className="h-9 text-xs font-mono"
                       />
                     </div>
                     <div className="space-y-1">

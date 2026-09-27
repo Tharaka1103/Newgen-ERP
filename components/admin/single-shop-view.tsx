@@ -194,6 +194,7 @@ export function SingleShopView({
       itemCode: "",
       name: "",
       actualPrice: 0,
+      sellingPrice: 0,
       description: "",
     },
   });
@@ -205,6 +206,7 @@ export function SingleShopView({
       itemCode: "",
       name: "",
       actualPrice: 0,
+      sellingPrice: 0,
       description: "",
       isActive: true,
     },
@@ -673,12 +675,41 @@ export function SingleShopView({
     },
     {
       accessorKey: "actualPrice",
-      header: "Unit Cost Price (LKR)",
+      header: "Base Cost (LKR)",
       cell: ({ row }) => (
-        <span className="font-mono text-xs font-semibold text-foreground">
-          LKR {Number(row.original.actualPrice).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+        <span className="font-mono text-xs font-semibold text-muted-foreground">
+          LKR {Number(row.original.actualPrice || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
         </span>
       ),
+    },
+    {
+      accessorKey: "sellingPrice",
+      header: "Selling Price (LKR)",
+      cell: ({ row }) => (
+        <span className="font-mono text-xs font-semibold text-foreground">
+          LKR {Number(row.original.sellingPrice || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+        </span>
+      ),
+    },
+    {
+      id: "margin",
+      header: "Unit Profit Margin",
+      cell: ({ row }) => {
+        const cost = Number(row.original.actualPrice || 0);
+        const sell = Number(row.original.sellingPrice || 0);
+        const profit = sell - cost;
+        const marginPct = sell > 0 ? ((profit / sell) * 100).toFixed(0) : "0";
+        return (
+          <div className="flex flex-col">
+            <span className={`font-mono text-xs font-bold ${profit >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-destructive"}`}>
+              {profit >= 0 ? "+" : ""}LKR {profit.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+            </span>
+            <span className="text-[10px] text-muted-foreground font-mono">
+              {marginPct}% margin
+            </span>
+          </div>
+        );
+      },
     },
     {
       accessorKey: "isActive",
@@ -705,7 +736,8 @@ export function SingleShopView({
                   itemId: item._id,
                   itemCode: item.itemCode,
                   name: item.name,
-                  actualPrice: item.actualPrice,
+                  actualPrice: item.actualPrice || 0,
+                  sellingPrice: item.sellingPrice || 0,
                   description: item.description || "",
                   isActive: item.isActive,
                 });
@@ -887,6 +919,7 @@ export function SingleShopView({
                     itemCode: "",
                     name: "",
                     actualPrice: 0,
+                    sellingPrice: 0,
                     description: "",
                   });
                   setAddItemOpen(true);
@@ -1303,6 +1336,7 @@ export function SingleShopView({
                     itemCode: "",
                     name: "",
                     actualPrice: 0,
+                    sellingPrice: 0,
                     description: "",
                   });
                   setAddItemOpen(true);
@@ -1521,18 +1555,36 @@ export function SingleShopView({
               )}
             </div>
 
-            <div className="space-y-1.5">
-              <label className="text-xs font-semibold uppercase text-muted-foreground">Unit Cost Price (LKR) *</label>
-              <Input
-                type="number"
-                step="0.01"
-                placeholder="0.00"
-                {...createItemForm.register("actualPrice", { valueAsNumber: true })}
-                className="h-9 text-xs font-mono font-semibold"
-              />
-              {createItemForm.formState.errors.actualPrice && (
-                <p className="text-xs text-destructive">{createItemForm.formState.errors.actualPrice.message}</p>
-              )}
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold uppercase text-muted-foreground">Unit Cost Price (LKR) *</label>
+                <Input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  placeholder="0.00"
+                  {...createItemForm.register("actualPrice", { valueAsNumber: true })}
+                  className="h-9 text-xs font-mono font-semibold"
+                />
+                {createItemForm.formState.errors.actualPrice && (
+                  <p className="text-xs text-destructive">{createItemForm.formState.errors.actualPrice.message}</p>
+                )}
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold uppercase text-muted-foreground">Selling Unit Price (LKR) *</label>
+                <Input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  placeholder="0.00"
+                  {...createItemForm.register("sellingPrice", { valueAsNumber: true })}
+                  className="h-9 text-xs font-mono font-semibold"
+                />
+                {createItemForm.formState.errors.sellingPrice && (
+                  <p className="text-xs text-destructive">{createItemForm.formState.errors.sellingPrice.message}</p>
+                )}
+              </div>
             </div>
 
             <div className="space-y-1.5">
@@ -1587,14 +1639,36 @@ export function SingleShopView({
               />
             </div>
 
-            <div className="space-y-1.5">
-              <label className="text-xs font-semibold uppercase text-muted-foreground">Unit Cost Price (LKR) *</label>
-              <Input
-                type="number"
-                step="0.01"
-                {...editItemForm.register("actualPrice", { valueAsNumber: true })}
-                className="h-9 text-xs font-mono font-semibold"
-              />
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold uppercase text-muted-foreground">Unit Cost Price (LKR) *</label>
+                <Input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  placeholder="0.00"
+                  {...editItemForm.register("actualPrice", { valueAsNumber: true })}
+                  className="h-9 text-xs font-mono font-semibold"
+                />
+                {editItemForm.formState.errors.actualPrice && (
+                  <p className="text-xs text-destructive">{editItemForm.formState.errors.actualPrice.message}</p>
+                )}
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold uppercase text-muted-foreground">Selling Unit Price (LKR) *</label>
+                <Input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  placeholder="0.00"
+                  {...editItemForm.register("sellingPrice", { valueAsNumber: true })}
+                  className="h-9 text-xs font-mono font-semibold"
+                />
+                {editItemForm.formState.errors.sellingPrice && (
+                  <p className="text-xs text-destructive">{editItemForm.formState.errors.sellingPrice.message}</p>
+                )}
+              </div>
             </div>
 
             <div className="space-y-1.5">

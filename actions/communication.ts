@@ -28,9 +28,18 @@ export async function getCommunicationItemsAction(shopId: string) {
       .sort({ itemCode: 1 })
       .lean();
 
+    const userIsAdmin = isAdmin(session.user as any);
+    const sanitizedItems = items.map((item) => {
+      if (!userIsAdmin) {
+        const { actualPrice, ...rest } = item;
+        return rest;
+      }
+      return item;
+    });
+
     return {
       success: true,
-      items: JSON.parse(JSON.stringify(items)),
+      items: JSON.parse(JSON.stringify(sanitizedItems)),
     };
   } catch (error) {
     console.error("Get communication items error:", error);
@@ -56,9 +65,12 @@ export async function getCommunicationItemByCodeAction(shopId: string, itemCode:
       return { success: false, error: "Item not found with this code." };
     }
 
+    const userIsAdmin = isAdmin(session.user as any);
+    const itemData = userIsAdmin ? item : (({ actualPrice, ...rest }) => rest)(item);
+
     return {
       success: true,
-      item: JSON.parse(JSON.stringify(item)),
+      item: JSON.parse(JSON.stringify(itemData)),
     };
   } catch (error) {
     console.error("Lookup item by code error:", error);
@@ -102,8 +114,8 @@ export async function createCommunicationItemAction(formData: unknown) {
       shop: shop._id,
       itemCode: result.data.itemCode.trim().toUpperCase(),
       name: result.data.name.trim(),
-      actualPrice: Number(result.data.actualPrice),
-      sellingPrice: 0,
+      actualPrice: Number(result.data.actualPrice || 0),
+      sellingPrice: Number(result.data.sellingPrice || 0),
       description: (result.data.description || "").trim(),
       isActive: true,
       createdBy: new mongoose.Types.ObjectId(session.user.id),
@@ -119,6 +131,7 @@ export async function createCommunicationItemAction(formData: unknown) {
         itemCode: newItem.itemCode,
         name: newItem.name,
         actualPrice: newItem.actualPrice,
+        sellingPrice: newItem.sellingPrice,
       },
     });
 
@@ -177,7 +190,8 @@ export async function updateCommunicationItemAction(formData: unknown) {
 
     item.itemCode = result.data.itemCode.trim().toUpperCase();
     item.name = result.data.name.trim();
-    item.actualPrice = Number(result.data.actualPrice);
+    item.actualPrice = Number(result.data.actualPrice || 0);
+    item.sellingPrice = Number(result.data.sellingPrice || 0);
     item.description = (result.data.description || "").trim();
     item.isActive = result.data.isActive;
 

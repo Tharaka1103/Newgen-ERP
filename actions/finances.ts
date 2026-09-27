@@ -10,6 +10,7 @@ import { BankAccount } from "@/models/BankAccount";
 import { PettyCashAccount } from "@/models/PettyCashAccount";
 import { CustomerCredit } from "@/models/CustomerCredit";
 import { CreditTransaction } from "@/models/CreditTransaction";
+import { CommunicationItem } from "@/models/CommunicationItem";
 import { sanitizeInput } from "@/lib/sanitize";
 import {
   createFinanceRecordSchema,
@@ -749,9 +750,27 @@ export async function createCommunicationSaleBatchAction(payload: {
     for (const item of payload.items) {
       const netAmount = Math.max(0, Number(item.amount) || Number(item.totalPrice) - Number(item.discountPrice || 0));
       grandTotal += netAmount;
+      // Resolve unit selling price
       const unitSelling = item.sellingPrice !== undefined && item.sellingPrice > 0
         ? Number(item.sellingPrice)
         : (item.quantity > 0 ? Number((item.totalPrice / item.quantity).toFixed(2)) : item.totalPrice);
+
+      // Securely resolve base unit cost price from database (protects secret cost from staff)
+      let resolvedActualPrice = Number(item.actualPrice || 0);
+      if (item.communicationItem) {
+        const commItemDoc = await CommunicationItem.findById(item.communicationItem).select("actualPrice");
+        if (commItemDoc && typeof commItemDoc.actualPrice === "number") {
+          resolvedActualPrice = commItemDoc.actualPrice;
+        }
+      } else if (item.itemCode) {
+        const commItemDoc = await CommunicationItem.findOne({
+          shop: shop._id,
+          itemCode: item.itemCode.trim().toUpperCase(),
+        }).select("actualPrice");
+        if (commItemDoc && typeof commItemDoc.actualPrice === "number") {
+          resolvedActualPrice = commItemDoc.actualPrice;
+        }
+      }
 
       const recordReason = isCredit
         ? `Credit Sale to ${customerCreditDoc.name} (${customerCreditDoc.phone}): ${item.itemName} (${item.quantity} ${item.quantity === 1 ? "unit" : "units"})`
@@ -783,7 +802,7 @@ export async function createCommunicationSaleBatchAction(payload: {
         itemCode: item.itemCode ? item.itemCode.trim().toUpperCase() : null,
         itemName: item.itemName.trim(),
         quantity: Number(item.quantity || 1),
-        actualPrice: Number(item.actualPrice || 0),
+        actualPrice: resolvedActualPrice,
         sellingPrice: unitSelling,
         discountPrice: Number(item.discountPrice || 0),
         isRelatedToBranch: isBranchRelated,
