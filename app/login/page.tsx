@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import Image from "next/image";
+import { DashboardCardVisual } from "@/components/shared/dashboard-card-visual";
 import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -130,14 +131,8 @@ export default function LoginPage() {
         {/* Centerpiece Image - Fully Displayed */}
         <div className="my-auto flex items-center justify-center p-4">
           <div className="w-full max-w-[440px] p-4 shadow-sm transition-all">
-            <Image
-              src="/dashboard-card.svg"
-              alt="Newgen ERP Visual Graphic"
-              width={1123}
-              height={1587}
-              priority
-              unoptimized
-              className="w-full h-auto max-h-[540px] object-contain rounded-xl select-none"
+            <DashboardCardVisual
+              className="w-full h-auto max-h-[540px] rounded-xl select-none drop-shadow-xs"
             />
           </div>
         </div>

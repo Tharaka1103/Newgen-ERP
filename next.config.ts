@@ -31,14 +31,17 @@ const nextConfig: NextConfig = {
   reactStrictMode: true,
   images: {
     dangerouslyAllowSVG: true,
-    contentDispositionType: "attachment",
-    contentSecurityPolicy: "default-src 'self'; script-src 'none'; sandbox;",
+    contentDispositionType: "inline",
   },
   async headers() {
     return [
       {
         source: "/dashboard-card.svg",
         headers: [
+          {
+            key: "Content-Type",
+            value: "image/svg+xml",
+          },
           {
             key: "Cache-Control",
             value: "public, max-age=31536000, immutable",

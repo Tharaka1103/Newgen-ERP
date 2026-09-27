@@ -53,6 +53,19 @@ export const updateFinanceRecordSchema = z.object({
   reason: z.string().min(2, "Reason must be at least 2 characters"),
   amount: z.number().positive("Amount must be greater than 0"),
   type: transactionTypeEnum,
+
+  // Communication Shop Fields
+  isCommunicationItem: z.boolean().optional(),
+  communicationItem: z.string().optional().nullable(),
+  itemCode: z.string().optional().nullable(),
+  itemName: z.string().optional().nullable(),
+  quantity: z.number().min(1, "Quantity must be at least 1").optional(),
+  actualPrice: z.number().optional(),
+  sellingPrice: z.number().optional(),
+  discountPrice: z.number().optional(),
+  isRelatedToBranch: z.boolean().optional(),
+  relatedBranch: z.string().optional().nullable(),
+  relatedBranchNote: z.string().optional(),
 });
 
 export type UpdateFinanceRecordInput = z.infer<typeof updateFinanceRecordSchema>;

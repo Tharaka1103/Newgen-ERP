@@ -3,6 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import Image from "next/image";
+import { DashboardCardVisual } from "@/components/shared/dashboard-card-visual";
 import { usePathname } from "next/navigation";
 import {
   Sidebar,
@@ -139,16 +140,9 @@ export function AppSidebar({ user }: AppSidebarProps) {
 
         {/* Portrait Visual Card (Positioned directly above the footer top border) */}
         <div className="mt-auto px-2 pb-2">
-          <div className="relative overflow-hidden  p-1.5">
+          <div className="relative overflow-hidden p-1.5">
             <div className="relative w-full aspect-[842/1190] max-h-[290px] overflow-hidden flex items-center justify-center">
-              <Image
-                src="/dashboard-card.svg"
-                alt="Newgen Finance Card"
-                width={842}
-                height={1190}
-                loading="lazy"
-                decoding="async"
-                unoptimized
+              <DashboardCardVisual
                 className="h-full w-full object-contain transition-transform duration-300"
               />
             </div>
@@ -175,8 +169,8 @@ export function AppSidebar({ user }: AppSidebarProps) {
         <div className="flex items-center justify-between text-[11px] text-muted-foreground px-1">
           <span>v1.2.0</span>
           <span className="flex items-center gap-1.5">
-            <span className="size-1.5 rounded-full bg-chart-2 animate-pulse" />
             <span className="text-[10px]">Online</span>
+            <span className="size-1.5 rounded-full bg-green-400 animate-pulse" />
           </span>
         </div>
 

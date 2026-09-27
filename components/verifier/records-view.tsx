@@ -38,6 +38,8 @@ import {
   FilterIcon,
   Loader2Icon,
   LockIcon,
+  FileTextIcon,
+  ShieldCheckIcon,
 } from "lucide-react";
 import { toast } from "@/components/ui/toast";
 
@@ -177,12 +179,46 @@ export function RecordsView({
     },
     {
       accessorKey: "reason",
-      header: "Reason / Purpose",
-      cell: ({ row }) => (
-        <span className="text-xs text-muted-foreground truncate max-w-xs block">
-          {row.original.reason}
-        </span>
-      ),
+      header: "Reason / Item Details",
+      cell: ({ row }) => {
+        const r = row.original;
+        const hasCommItem = Boolean(r.isCommunicationItem || r.itemCode || r.itemName);
+        return (
+          <div className="max-w-[240px] space-y-1">
+            {hasCommItem && (
+              <div className="flex items-center gap-1 flex-wrap">
+                <Badge variant="secondary" className="text-[9px] font-mono px-1 py-0 h-3.5">
+                  {r.itemCode || "COMM"}
+                </Badge>
+                <span className="text-xs font-semibold text-foreground truncate">
+                  {r.itemName || "Item"}
+                </span>
+                {r.quantity && r.quantity > 1 && (
+                  <Badge variant="outline" className="text-[9px] font-mono px-1 py-0 h-3.5 bg-muted">
+                    ×{r.quantity}
+                  </Badge>
+                )}
+              </div>
+            )}
+            <p className="text-xs text-muted-foreground truncate" title={r.reason}>
+              {r.reason}
+            </p>
+            {r.isRelatedToBranch && (
+              <div className="space-y-0.5 pt-0.5">
+                <span className="inline-flex items-center gap-1 text-[9px] font-medium text-amber-700 dark:text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20">
+                  <BuildingIcon className="size-2.5" />
+                  Branch Ref: {r.relatedBranch?.name || "Other Branch"} {r.relatedBranch?.code ? `(${r.relatedBranch.code})` : ""}
+                </span>
+                {r.relatedBranchNote && (
+                  <p className="text-[10px] text-amber-800 dark:text-amber-300 italic bg-amber-500/5 px-1.5 py-0.5 rounded border border-amber-500/20 line-clamp-2" title={r.relatedBranchNote}>
+                    Note: {r.relatedBranchNote}
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      },
     },
     {
       accessorKey: "amount",
@@ -302,234 +338,305 @@ export function RecordsView({
 
       {/* REVIEW DIALOG */}
       <Dialog open={reviewOpen} onOpenChange={setReviewOpen}>
-        <DialogContent className="sm:max-w-lg">
-          <DialogHeader>
+        <DialogContent className="sm:max-w-4xl lg:max-w-5xl h-[85vh] max-h-[85vh] flex flex-col p-6 overflow-hidden">
+          <DialogHeader className="shrink-0 pb-3 border-b border-border/50">
             <DialogTitle className="flex items-center justify-between">
-              <span className="font-mono text-base font-bold text-primary">
-                {selectedRecord?.billNumber}
-              </span>
-              <StatusBadge status={selectedRecord?.status || "PENDING"} />
+              <div className="flex items-center gap-2">
+                <span className="font-mono text-base font-bold text-primary">
+                  {selectedRecord?.billNumber}
+                </span>
+                <span className="text-xs text-muted-foreground font-normal">
+                  • {selectedRecord?.shop?.name} ({selectedRecord?.shop?.code})
+                </span>
+                <StatusBadge status={selectedRecord?.status || "PENDING"} />
+              </div>
             </DialogTitle>
-            <DialogDescription>
+            <DialogDescription className="sr-only">
               Verification review for {selectedRecord?.shop?.name}
             </DialogDescription>
           </DialogHeader>
 
-          {/* Record Details Readout */}
-          <div className="space-y-4 py-2">
-            <div className="rounded-xl border border-border bg-muted/20 p-4 space-y-3">
-              <div className="grid grid-cols-2 gap-2 text-xs">
-                <div>
-                  <span className="text-muted-foreground block text-[11px]">Date</span>
-                  <span className="font-semibold text-foreground">
-                    {selectedRecord?.date ? new Date(selectedRecord.date).toLocaleDateString() : "—"}
-                  </span>
-                </div>
-                <div>
-                  <span className="text-muted-foreground block text-[11px]">Payment Method</span>
-                  <span className="font-semibold text-foreground uppercase font-mono">
-                    {selectedRecord?.paymentMethod}
-                  </span>
-                </div>
+          {/* TWO COLUMN CONTENT */}
+          <div className="grid grid-cols-1 md:grid-cols-12 gap-6 flex-1 min-h-0 overflow-hidden pt-2">
+            {/* LEFT COLUMN: Record Details */}
+            <div className="md:col-span-7 flex flex-col min-h-0">
+              <div className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-muted-foreground pb-2">
+                <FileTextIcon className="size-3.5 text-primary" />
+                <span>Transaction &amp; Item Details</span>
               </div>
 
-              <div className="grid grid-cols-2 gap-2 text-xs">
-                <div>
-                  <span className="text-muted-foreground block text-[11px]">Category</span>
-                  <span className="font-semibold text-foreground">
-                    {selectedRecord?.category?.name || "Uncategorized"}
-                  </span>
-                </div>
-                <div>
-                  <span className="text-muted-foreground block text-[11px]">Submitted Amount</span>
-                  <span className="font-semibold font-mono text-base text-foreground">
-                    LKR {Number(selectedRecord?.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                  </span>
-                </div>
-              </div>
-
-              <div className="text-xs pt-1 border-t border-border/60">
-                <span className="text-muted-foreground block text-[11px]">Purpose / Reason</span>
-                <p className="mt-1 text-foreground font-medium bg-card/60 p-2 rounded border border-border/40">
-                  {selectedRecord?.reason}
-                </p>
-              </div>
-
-              <div className="text-[11px] text-muted-foreground flex items-center justify-between">
-                <span>Submitted by: {selectedRecord?.createdBy?.name}</span>
-                <span>Branch Code: {selectedRecord?.shop?.code}</span>
-              </div>
-            </div>
-
-            {/* Decision Controls or Read-Only Finalized State */}
-            {selectedRecord?.status !== "PENDING" ? (
-              <div className="space-y-4">
-                <div className="rounded-xl border border-border bg-muted/40 p-4 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-semibold text-foreground uppercase tracking-wider flex items-center gap-1.5">
-                      <LockIcon className="size-3.5 text-muted-foreground" />
-                      Verification Finalized
-                    </span>
-                    <StatusBadge status={selectedRecord?.status} />
+              <div className="flex-1 overflow-y-auto no-scrollbar [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden space-y-3.5 pr-2">
+                <div className="rounded-xl border border-border bg-card p-4 space-y-3 shadow-xs">
+                  <div className="grid grid-cols-2 gap-3 text-xs">
+                    <div>
+                      <span className="text-muted-foreground block text-[10px] uppercase font-semibold">Date</span>
+                      <span className="font-semibold text-foreground text-sm">
+                        {selectedRecord?.date ? new Date(selectedRecord.date).toLocaleDateString() : "—"}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground block text-[10px] uppercase font-semibold">Payment Method</span>
+                      <span className="font-semibold text-foreground uppercase font-mono text-xs">
+                        {selectedRecord?.paymentMethod}
+                      </span>
+                    </div>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-2 text-xs pt-1">
+                  <div className="grid grid-cols-2 gap-3 text-xs pt-2 border-t border-border/60">
                     <div>
-                      <span className="text-muted-foreground text-[11px] block">Verified By</span>
-                      <span className="font-semibold text-foreground">
-                        {selectedRecord?.reviewedBy?.name || "System Verifier"}
+                      <span className="text-muted-foreground block text-[10px] uppercase font-semibold">Category</span>
+                      <span className="font-semibold text-foreground block truncate">
+                        {selectedRecord?.category?.name || "Uncategorized"}
                       </span>
                     </div>
                     <div>
-                      <span className="text-muted-foreground text-[11px] block">Verified Date</span>
-                      <span className="font-semibold text-foreground">
-                        {selectedRecord?.reviewedAt
-                          ? new Date(selectedRecord.reviewedAt).toLocaleString()
-                          : "—"}
+                      <span className="text-muted-foreground block text-[10px] uppercase font-semibold">Submitted Amount</span>
+                      <span className="font-bold font-mono text-base text-emerald-600 dark:text-emerald-400">
+                        LKR {Number(selectedRecord?.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                       </span>
                     </div>
+                  </div>
 
-                    {selectedRecord?.status === "APPROVED" && (
-                      <div className="col-span-2 pt-1 border-t border-border/40">
-                        <span className="text-muted-foreground text-[11px] block">Final Approved Amount</span>
-                        <span className="font-bold text-chart-2 font-mono text-sm">
-                          LKR {Number(selectedRecord?.approvedAmount ?? selectedRecord?.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  <div className="text-xs pt-2 border-t border-border/60">
+                    <span className="text-muted-foreground block text-[10px] uppercase font-semibold">Purpose / Reason</span>
+                    <p className="mt-1 text-foreground font-medium bg-muted/40 p-2.5 rounded-lg border border-border/50 text-xs">
+                      {selectedRecord?.reason || "No description provided"}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Communication Item Details */}
+                {(selectedRecord?.isCommunicationItem || selectedRecord?.itemName) && (
+                  <div className="p-3.5 rounded-xl border border-primary/20 bg-primary/5 space-y-2.5 text-xs">
+                    <div className="flex items-center justify-between font-semibold">
+                      <span className="text-foreground flex items-center gap-1.5">
+                        <Badge variant="secondary" className="font-mono text-[10px]">
+                          {selectedRecord.itemCode || "ITEM"}
+                        </Badge>
+                        <span className="font-bold text-xs">{selectedRecord.itemName}</span>
+                      </span>
+                      <Badge variant="outline" className="font-mono text-[10px] bg-background">
+                        Qty: {selectedRecord.quantity || 1}
+                      </Badge>
+                    </div>
+                    <div className="grid grid-cols-3 gap-2 text-[11px] font-mono text-muted-foreground pt-1.5 border-t border-primary/10">
+                      <div>
+                        <span className="block text-[10px] text-muted-foreground uppercase font-sans">Unit Selling</span>
+                        <span className="font-semibold text-foreground">
+                          LKR {Number(selectedRecord.sellingPrice || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                         </span>
                       </div>
-                    )}
+                      <div>
+                        <span className="block text-[10px] text-muted-foreground uppercase font-sans">Unit Cost</span>
+                        <span className="font-semibold text-foreground">
+                          LKR {Number(selectedRecord.actualPrice || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="block text-[10px] text-muted-foreground uppercase font-sans">Discount</span>
+                        <span className="font-semibold text-foreground">
+                          LKR {Number(selectedRecord.discountPrice || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
-                    {selectedRecord?.reviewRemarks && (
-                      <div className="col-span-2 pt-1 border-t border-border/40">
-                        <span className="text-muted-foreground text-[11px] block">Verification Remarks</span>
-                        <p className="mt-1 text-foreground bg-card/60 p-2 rounded border border-border/40 text-xs">
-                          {selectedRecord.reviewRemarks}
+                {/* Cross-Branch Transfer Details */}
+                {selectedRecord?.isRelatedToBranch && (
+                  <div className="p-3.5 rounded-xl border border-amber-500/30 bg-amber-500/10 space-y-2.5 text-xs">
+                    <div className="flex items-center gap-1.5 font-semibold text-amber-800 dark:text-amber-300">
+                      <BuildingIcon className="size-3.5" />
+                      Cross-Branch Transfer Details
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 text-[11px]">
+                      <div>
+                        <span className="text-muted-foreground block text-[10px] uppercase">Originating Branch</span>
+                        <span className="font-semibold text-foreground">{selectedRecord?.shop?.name} ({selectedRecord?.shop?.code})</span>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground block text-[10px] uppercase">Target / Related Branch</span>
+                        <span className="font-bold text-amber-700 dark:text-amber-400">
+                          {selectedRecord?.relatedBranch?.name || "Specified Branch"} {selectedRecord?.relatedBranch?.code ? `(${selectedRecord.relatedBranch.code})` : ""}
+                        </span>
+                      </div>
+                    </div>
+                    {selectedRecord?.relatedBranchNote && (
+                      <div className="pt-1.5 border-t border-amber-500/20">
+                        <span className="text-muted-foreground block text-[10px] uppercase font-semibold">Branch Transfer Note:</span>
+                        <p className="mt-1 text-xs text-foreground font-medium bg-background/80 p-2.5 rounded-lg border border-amber-500/20 whitespace-pre-wrap">
+                          {selectedRecord.relatedBranchNote}
                         </p>
                       </div>
                     )}
                   </div>
-                </div>
-
-                {/* Disabled Decision Controls */}
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      disabled={true}
-                      className="flex-1 gap-1.5 text-xs opacity-50 cursor-not-allowed"
-                    >
-                      <CheckCircle2Icon className="size-4" />
-                      Approve Transaction
-                    </Button>
-
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      disabled={true}
-                      className="flex-1 gap-1.5 text-xs opacity-50 cursor-not-allowed"
-                    >
-                      <XCircleIcon className="size-4" />
-                      Reject Transaction
-                    </Button>
-                  </div>
-                  <p className="text-[11px] text-muted-foreground text-center">
-                    This transaction has already been {selectedRecord?.status?.toLowerCase()} and cannot be approved or rejected again.
-                  </p>
-                </div>
-
-                <DialogFooter className="pt-2">
-                  <Button type="button" variant="outline" size="sm" onClick={() => setReviewOpen(false)}>
-                    Close
-                  </Button>
-                </DialogFooter>
-              </div>
-            ) : (
-              <form onSubmit={reviewForm.handleSubmit(onReviewSubmit)} className="space-y-4">
-                <div className="flex items-center gap-2">
-                  <Button
-                    type="button"
-                    variant={actionType === "APPROVE" ? "default" : "outline"}
-                    size="sm"
-                    onClick={() => {
-                      setActionType("APPROVE");
-                      reviewForm.setValue("status", "APPROVED");
-                      reviewForm.setValue("approvedAmount", selectedRecord?.amount);
-                    }}
-                    className={`flex-1 gap-1.5 text-xs ${actionType === "APPROVE" ? "bg-primary hover:bg-primary/90 text-primary-foreground" : ""}`}
-                  >
-                    <CheckCircle2Icon className="size-4" />
-                    Approve Transaction
-                  </Button>
-
-                  <Button
-                    type="button"
-                    variant={actionType === "REJECT" ? "destructive" : "outline"}
-                    size="sm"
-                    onClick={() => {
-                      setActionType("REJECT");
-                      reviewForm.setValue("status", "REJECTED");
-                      reviewForm.setValue("approvedAmount", null);
-                    }}
-                    className="flex-1 gap-1.5 text-xs"
-                  >
-                    <XCircleIcon className="size-4" />
-                    Reject Transaction
-                  </Button>
-                </div>
-
-                {actionType === "APPROVE" ? (
-                  <div className="space-y-3">
-                    <div className="space-y-1.5">
-                      <label className="text-xs font-semibold uppercase text-muted-foreground">
-                        Verification Remarks (Optional)
-                      </label>
-                      <Textarea
-                        placeholder="e.g. Verified with physical invoice and bank slip..."
-                        {...reviewForm.register("reviewRemarks")}
-                        className="text-xs"
-                        rows={2}
-                      />
-                    </div>
-                  </div>
-                ) : (
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-semibold uppercase text-destructive">
-                      Reason for Rejection (Mandatory) *
-                    </label>
-                    <Textarea
-                      placeholder="Clearly explain why this entry is declined (e.g., duplicate bill, unauthorized expense)..."
-                      {...reviewForm.register("reviewRemarks")}
-                      className="text-xs border-destructive/40 focus:border-destructive"
-                      rows={3}
-                    />
-                    {reviewForm.formState.errors.reviewRemarks && (
-                      <p className="text-xs text-destructive">
-                        {reviewForm.formState.errors.reviewRemarks.message}
-                      </p>
-                    )}
-                  </div>
                 )}
 
-                <DialogFooter className="pt-2">
-                  <Button type="button" variant="outline" size="sm" onClick={() => setReviewOpen(false)}>
-                    Cancel
-                  </Button>
-                  <Button
-                    type="submit"
-                    size="sm"
-                    disabled={reviewForm.formState.isSubmitting}
-                    className={actionType === "APPROVE" ? "bg-primary hover:bg-primary/90 text-primary-foreground" : "bg-destructive text-destructive-foreground hover:bg-destructive/90"}
-                  >
-                    {reviewForm.formState.isSubmitting ? (
-                      <Loader2Icon className="size-3.5 animate-spin mr-1" />
-                    ) : null}
-                    Confirm {actionType === "APPROVE" ? "Approval" : "Rejection"}
-                  </Button>
-                </DialogFooter>
-              </form>
-            )}
+                <div className="text-[11px] text-muted-foreground flex items-center justify-between px-1">
+                  <span>Submitted by: <strong className="text-foreground">{selectedRecord?.createdBy?.name || "Unknown"}</strong></span>
+                  <span>Branch Code: <strong className="text-foreground">{selectedRecord?.shop?.code || "—"}</strong></span>
+                </div>
+              </div>
+            </div>
+
+            {/* RIGHT COLUMN: Verify Action Area */}
+            <div className="md:col-span-5 flex flex-col min-h-0 border-t md:border-t-0 md:border-l border-border/60 md:pl-6 pt-4 md:pt-0">
+              <div className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-muted-foreground pb-2">
+                <ShieldCheckIcon className="size-3.5 text-primary" />
+                <span>Verification Decision</span>
+              </div>
+
+              {selectedRecord?.status !== "PENDING" ? (
+                <div className="flex flex-col flex-1 min-h-0 justify-between">
+                  <div className="flex-1 overflow-y-auto no-scrollbar [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden space-y-4 pr-1">
+                    <div className="rounded-xl border border-border bg-card p-4 space-y-3 shadow-xs">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-semibold text-foreground uppercase tracking-wider flex items-center gap-1.5">
+                          <LockIcon className="size-3.5 text-muted-foreground" />
+                          Verification Finalized
+                        </span>
+                        <StatusBadge status={selectedRecord?.status} />
+                      </div>
+
+                      <div className="grid grid-cols-1 gap-2.5 text-xs pt-1">
+                        <div>
+                          <span className="text-muted-foreground text-[10px] uppercase block font-semibold">Verified By</span>
+                          <span className="font-semibold text-foreground">
+                            {selectedRecord?.reviewedBy?.name || "System Verifier"}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-muted-foreground text-[10px] uppercase block font-semibold">Verified Date</span>
+                          <span className="font-semibold text-foreground">
+                            {selectedRecord?.reviewedAt
+                              ? new Date(selectedRecord.reviewedAt).toLocaleString()
+                              : "—"}
+                          </span>
+                        </div>
+
+                        {selectedRecord?.status === "APPROVED" && (
+                          <div className="pt-2 border-t border-border/40">
+                            <span className="text-muted-foreground text-[10px] uppercase block font-semibold">Final Approved Amount</span>
+                            <span className="font-bold text-emerald-600 dark:text-emerald-400 font-mono text-base">
+                              LKR {Number(selectedRecord?.approvedAmount ?? selectedRecord?.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                            </span>
+                          </div>
+                        )}
+
+                        {selectedRecord?.reviewRemarks && (
+                          <div className="pt-2 border-t border-border/40">
+                            <span className="text-muted-foreground text-[10px] uppercase block font-semibold">Verification Remarks</span>
+                            <p className="mt-1 text-foreground bg-muted/40 p-2.5 rounded-lg border border-border/40 text-xs whitespace-pre-wrap">
+                              {selectedRecord.reviewRemarks}
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="p-3 rounded-lg border border-border bg-muted/20 text-center text-xs text-muted-foreground">
+                      This transaction has already been {selectedRecord?.status?.toLowerCase()} and cannot be reviewed again.
+                    </div>
+                  </div>
+
+                  <div className="pt-3 border-t border-border flex justify-end shrink-0">
+                    <Button type="button" variant="outline" size="sm" onClick={() => setReviewOpen(false)}>
+                      Close
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <form onSubmit={reviewForm.handleSubmit(onReviewSubmit)} className="flex flex-col flex-1 min-h-0 justify-between">
+                  <div className="flex-1 overflow-y-auto no-scrollbar [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden space-y-4 pr-1">
+                    <div className="space-y-1.5">
+                      <label className="text-[11px] font-semibold uppercase text-muted-foreground">Select Decision</label>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          type="button"
+                          variant={actionType === "APPROVE" ? "default" : "outline"}
+                          size="sm"
+                          onClick={() => {
+                            setActionType("APPROVE");
+                            reviewForm.setValue("status", "APPROVED");
+                            reviewForm.setValue("approvedAmount", selectedRecord?.amount);
+                          }}
+                          className={`flex-1 gap-1.5 text-xs font-semibold ${actionType === "APPROVE" ? "bg-primary hover:bg-primary/90 text-primary-foreground shadow-xs" : ""}`}
+                        >
+                          <CheckCircle2Icon className="size-4" />
+                          Approve
+                        </Button>
+
+                        <Button
+                          type="button"
+                          variant={actionType === "REJECT" ? "destructive" : "outline"}
+                          size="sm"
+                          onClick={() => {
+                            setActionType("REJECT");
+                            reviewForm.setValue("status", "REJECTED");
+                            reviewForm.setValue("approvedAmount", null);
+                          }}
+                          className="flex-1 gap-1.5 text-xs font-semibold"
+                        >
+                          <XCircleIcon className="size-4" />
+                          Reject
+                        </Button>
+                      </div>
+                    </div>
+
+                    {actionType === "APPROVE" ? (
+                      <div className="space-y-3.5">
+                        <div className="space-y-1.5">
+                          <label className="text-[11px] font-semibold uppercase text-muted-foreground">
+                            Verification Remarks (Optional)
+                          </label>
+                          <Textarea
+                            placeholder="e.g. Verified with physical invoice and branch note..."
+                            {...reviewForm.register("reviewRemarks")}
+                            className="text-xs resize-none"
+                            rows={5}
+                          />
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="space-y-1.5">
+                        <label className="text-[11px] font-semibold uppercase text-destructive flex items-center justify-between">
+                          <span>Reason for Rejection *</span>
+                          <span className="text-[10px] text-destructive font-normal">(mandatory)</span>
+                        </label>
+                        <Textarea
+                          placeholder="Clearly explain why this entry is declined (e.g., incorrect branch allocation, duplicate bill, unauthorized expense)..."
+                          {...reviewForm.register("reviewRemarks")}
+                          className="text-xs border-destructive/40 focus:border-destructive resize-none"
+                          rows={5}
+                        />
+                        {reviewForm.formState.errors.reviewRemarks && (
+                          <p className="text-xs text-destructive">
+                            {reviewForm.formState.errors.reviewRemarks.message}
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="pt-3 border-t border-border flex items-center justify-end gap-2 shrink-0">
+                    <Button type="button" variant="outline" size="sm" onClick={() => setReviewOpen(false)}>
+                      Cancel
+                    </Button>
+                    <Button
+                      type="submit"
+                      size="sm"
+                      disabled={reviewForm.formState.isSubmitting}
+                      className={actionType === "APPROVE" ? "bg-primary hover:bg-primary/90 text-primary-foreground font-semibold" : "bg-destructive text-destructive-foreground hover:bg-destructive/90 font-semibold"}
+                    >
+                      {reviewForm.formState.isSubmitting ? (
+                        <Loader2Icon className="size-3.5 animate-spin mr-1" />
+                      ) : null}
+                      Confirm {actionType === "APPROVE" ? "Approval" : "Rejection"}
+                    </Button>
+                  </div>
+                </form>
+              )}
+            </div>
           </div>
         </DialogContent>
       </Dialog>

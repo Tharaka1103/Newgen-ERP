@@ -70,6 +70,7 @@ interface CommCartItem {
   itemCode: string;
   itemName: string;
   actualPrice: number;
+  sellingPrice: number;
   quantity: number;
   totalPrice: number;
   discountPrice: number;
@@ -148,7 +149,7 @@ export function FinancesView({
   const [matchedItem, setMatchedItem] = React.useState<CommunicationItemOption | null>(null);
   const [isUnlistedItem, setIsUnlistedItem] = React.useState(false);
   const [commQuantity, setCommQuantity] = React.useState<number>(1);
-  const [commTotalPrice, setCommTotalPrice] = React.useState<number>(0);
+  const [commUnitPrice, setCommUnitPrice] = React.useState<number>(0);
   const [commDiscountPrice, setCommDiscountPrice] = React.useState<number>(0);
   const [commCustomItemName, setCommCustomItemName] = React.useState("");
   const [commCustomCostPrice, setCommCustomCostPrice] = React.useState<number>(0);
@@ -222,8 +223,31 @@ export function FinancesView({
       reason: "",
       amount: 0,
       type: "EXPENSE",
+      isCommunicationItem: false,
+      itemCode: "",
+      itemName: "",
+      quantity: 1,
+      actualPrice: 0,
+      sellingPrice: 0,
+      discountPrice: 0,
+      isRelatedToBranch: false,
+      relatedBranch: null,
+      relatedBranchNote: "",
     },
   });
+
+  const watchEditQty = editForm.watch("quantity") || 1;
+  const watchEditSelling = editForm.watch("sellingPrice") || 0;
+  const watchEditDiscount = editForm.watch("discountPrice") || 0;
+  const watchEditIsComm = editForm.watch("isCommunicationItem");
+  const watchEditIsBranch = editForm.watch("isRelatedToBranch");
+
+  React.useEffect(() => {
+    if (watchEditIsComm) {
+      const net = Math.max(0, (watchEditQty * watchEditSelling) - watchEditDiscount);
+      editForm.setValue("amount", net);
+    }
+  }, [watchEditQty, watchEditSelling, watchEditDiscount, watchEditIsComm, editForm]);
 
   const refreshRecords = async () => {
     setLoading(true);
@@ -251,6 +275,9 @@ export function FinancesView({
     if (found) {
       setMatchedItem(found);
       setIsUnlistedItem(false);
+      if (found.sellingPrice && found.sellingPrice > 0) {
+        setCommUnitPrice(found.sellingPrice);
+      }
     } else {
       setMatchedItem(null);
     }
@@ -292,17 +319,18 @@ export function FinancesView({
       return;
     }
 
-    if (commTotalPrice <= 0) {
+    if (commUnitPrice <= 0) {
       toast.create({
-        title: "Invalid Price",
-        description: "Total price for item must be greater than zero.",
+        title: "Invalid Unit Price",
+        description: "Unit price for item must be greater than zero.",
         type: "error",
       });
       return;
     }
 
+    const calculatedTotal = commQuantity * commUnitPrice;
     const discount = Math.max(0, commDiscountPrice || 0);
-    const net = Math.max(0, commTotalPrice - discount);
+    const net = Math.max(0, calculatedTotal - discount);
     const actualPrice = isUnlistedItem ? (commCustomCostPrice || 0) : (matchedItem?.actualPrice || 0);
 
     const newItem: CommCartItem = {
@@ -311,8 +339,9 @@ export function FinancesView({
       itemCode,
       itemName,
       actualPrice,
+      sellingPrice: commUnitPrice,
       quantity: commQuantity,
-      totalPrice: commTotalPrice,
+      totalPrice: calculatedTotal,
       discountPrice: discount,
       netAmount: net,
     };
@@ -326,7 +355,7 @@ export function FinancesView({
     setCommCustomItemName("");
     setCommCustomCostPrice(0);
     setCommQuantity(1);
-    setCommTotalPrice(0);
+    setCommUnitPrice(0);
     setCommDiscountPrice(0);
   };
 
@@ -365,9 +394,10 @@ export function FinancesView({
         ? (commItemLookup.trim().toUpperCase() || "CUSTOM")
         : (matchedItem?.itemCode || commItemLookup.trim().toUpperCase());
 
-      if (itemName && commTotalPrice > 0) {
+      if (itemName && commUnitPrice > 0) {
+        const calculatedTotal = (commQuantity || 1) * commUnitPrice;
         const discount = Math.max(0, commDiscountPrice || 0);
-        const net = Math.max(0, commTotalPrice - discount);
+        const net = Math.max(0, calculatedTotal - discount);
         const actualPrice = isUnlistedItem ? (commCustomCostPrice || 0) : (matchedItem?.actualPrice || 0);
 
         finalItems.push({
@@ -376,8 +406,9 @@ export function FinancesView({
           itemCode,
           itemName,
           actualPrice,
+          sellingPrice: commUnitPrice,
           quantity: commQuantity || 1,
-          totalPrice: commTotalPrice,
+          totalPrice: calculatedTotal,
           discountPrice: discount,
           netAmount: net,
         });
@@ -387,7 +418,7 @@ export function FinancesView({
     if (finalItems.length === 0) {
       toast.create({
         title: "No items to record",
-        description: "Please enter item details, quantity, and total price to record the sale.",
+        description: "Please enter item details, quantity, and unit price to record the sale.",
         type: "warning",
       });
       return;
@@ -403,6 +434,7 @@ export function FinancesView({
           itemName: it.itemName,
           quantity: it.quantity,
           actualPrice: it.actualPrice,
+          sellingPrice: it.sellingPrice,
           totalPrice: it.totalPrice,
           discountPrice: it.discountPrice,
           amount: it.netAmount,
@@ -429,7 +461,7 @@ export function FinancesView({
         setCommCustomItemName("");
         setCommCustomCostPrice(0);
         setCommQuantity(1);
-        setCommTotalPrice(0);
+        setCommUnitPrice(0);
         setCommDiscountPrice(0);
         setCommIsRelatedToBranch(false);
         setCommRelatedBranch(null);
@@ -472,7 +504,7 @@ export function FinancesView({
     setCommCustomItemName("");
     setCommCustomCostPrice(0);
     setCommQuantity(1);
-    setCommTotalPrice(0);
+    setCommUnitPrice(0);
     setCommDiscountPrice(0);
     setCommIsRelatedToBranch(false);
     setCommRelatedBranch(null);
@@ -535,16 +567,25 @@ export function FinancesView({
   };
 
   const openEditModal = (rec: any) => {
-    if (rec.status !== "PENDING" || rec.isLocked) {
+    const isOwner = rec.createdBy?._id === userId || rec.createdBy === userId;
+    const isCommEditable = isCommShop && isOwner && !rec.reviewedBy;
+    const isPending = rec.status === "PENDING" && !rec.isLocked;
+
+    if (!isPending && !isCommEditable) {
       toast.create({
         title: "Record locked",
-        description: "Only PENDING records can be modified by Finance Officers.",
+        description: "This record has been finalized and cannot be modified.",
         type: "warning",
       });
       return;
     }
 
     setSelectedRecord(rec);
+    const qty = rec.quantity || 1;
+    const sellPrice = rec.sellingPrice !== undefined && rec.sellingPrice > 0
+      ? rec.sellingPrice
+      : (qty > 0 ? Number((rec.amount / qty).toFixed(2)) : rec.amount);
+
     editForm.reset({
       recordId: rec._id,
       date: new Date(rec.date).toISOString().split("T")[0],
@@ -555,6 +596,19 @@ export function FinancesView({
       reason: rec.reason,
       amount: rec.amount,
       type: rec.type,
+
+      // Communication fields
+      isCommunicationItem: Boolean(rec.isCommunicationItem || rec.itemCode || rec.itemName),
+      communicationItem: rec.communicationItem?._id || rec.communicationItem || null,
+      itemCode: rec.itemCode || "",
+      itemName: rec.itemName || "",
+      quantity: qty,
+      sellingPrice: sellPrice,
+      actualPrice: rec.actualPrice || 0,
+      discountPrice: rec.discountPrice || 0,
+      isRelatedToBranch: Boolean(rec.isRelatedToBranch),
+      relatedBranch: rec.relatedBranch?._id || rec.relatedBranch || null,
+      relatedBranchNote: rec.relatedBranchNote || "",
     });
     setEditOpen(true);
   };
@@ -741,9 +795,12 @@ export function FinancesView({
       header: "Actions",
       cell: ({ row }) => {
         const rec = row.original;
+        const isOwner = rec.createdBy?._id === userId || rec.createdBy === userId;
+        const isCommEditable = isCommShop && isOwner && !rec.reviewedBy;
         const isPending = rec.status === "PENDING" && !rec.isLocked;
+        const canEdit = isPending || isCommEditable;
 
-        if (!isPending) {
+        if (!canEdit) {
           return (
             <Tooltip>
               <TooltipTrigger
@@ -1004,7 +1061,7 @@ export function FinancesView({
                   </div>
                 )}
 
-                {/* QUANTITY, TOTAL PRICE, DISCOUNT, NET */}
+                {/* QUANTITY, UNIT PRICE, DISCOUNT, NET */}
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-1">
                   <div className="space-y-1">
                     <label className="text-[11px] font-semibold text-muted-foreground uppercase">
@@ -1023,15 +1080,15 @@ export function FinancesView({
 
                   <div className="space-y-1">
                     <label className="text-[11px] font-semibold text-muted-foreground uppercase">
-                      Total Price for item (LKR) *
+                      Unit Price (LKR) *
                     </label>
                     <Input
                       type="number"
                       min="0"
                       step="any"
                       placeholder="0.00"
-                      value={commTotalPrice || ""}
-                      onChange={(e) => setCommTotalPrice(Math.max(0, Number(e.target.value) || 0))}
+                      value={commUnitPrice || ""}
+                      onChange={(e) => setCommUnitPrice(Math.max(0, Number(e.target.value) || 0))}
                       className="h-9 text-xs font-mono font-semibold"
                     />
                   </div>
@@ -1056,7 +1113,7 @@ export function FinancesView({
                       Net Total (LKR)
                     </label>
                     <div className="h-9 px-3 rounded-md border border-border bg-muted/40 flex items-center font-mono text-xs font-bold text-emerald-600 dark:text-emerald-400">
-                      LKR {Math.max(0, commTotalPrice - commDiscountPrice).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      LKR {Math.max(0, (commQuantity * commUnitPrice) - commDiscountPrice).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                     </div>
                   </div>
                 </div>
@@ -1101,8 +1158,9 @@ export function FinancesView({
                         <tr>
                           <th className="py-2 px-3 text-left w-8">#</th>
                           <th className="py-2 px-3 text-left">Item</th>
+                          <th className="py-2 px-3 text-right">Unit Price</th>
                           <th className="py-2 px-3 text-center w-16">Qty</th>
-                          <th className="py-2 px-3 text-right">Total Price</th>
+                          <th className="py-2 px-3 text-right">Subtotal</th>
                           <th className="py-2 px-3 text-right">Discount</th>
                           <th className="py-2 px-3 text-right">Net Amount</th>
                           <th className="py-2 px-3 text-center w-12">Action</th>
@@ -1120,8 +1178,11 @@ export function FinancesView({
                                 <span>Unit Cost: LKR {Number(item.actualPrice || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
                               </div>
                             </td>
-                            <td className="py-2 px-3 text-center">{item.quantity}</td>
                             <td className="py-2 px-3 text-right">
+                              LKR {item.sellingPrice.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                            </td>
+                            <td className="py-2 px-3 text-center">{item.quantity}</td>
+                            <td className="py-2 px-3 text-right text-muted-foreground">
                               LKR {item.totalPrice.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                             </td>
                             <td className="py-2 px-3 text-right text-muted-foreground">
@@ -1147,7 +1208,7 @@ export function FinancesView({
                       </tbody>
                       <tfoot className="bg-muted/30 border-t border-border font-mono font-bold">
                         <tr>
-                          <td colSpan={5} className="py-2.5 px-3 text-right text-xs uppercase text-foreground">
+                          <td colSpan={6} className="py-2.5 px-3 text-right text-xs uppercase text-foreground">
                             Grand Total ({commCartItems.length} {commCartItems.length === 1 ? "item" : "items"}):
                           </td>
                           <td className="py-2.5 px-3 text-right text-sm text-emerald-600 dark:text-emerald-400">
@@ -1426,74 +1487,285 @@ export function FinancesView({
 
       {/* EDIT RECORD MODAL */}
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className={watchEditIsComm ? "sm:max-w-2xl max-h-[90vh] overflow-y-auto" : "sm:max-w-md"}>
           <DialogHeader>
-            <DialogTitle>Edit Pending Transaction</DialogTitle>
-            <DialogDescription>Modify record before verification review</DialogDescription>
+            <DialogTitle className="flex items-center gap-2">
+              {watchEditIsComm ? <StoreIcon className="size-4 text-primary" /> : <EditIcon className="size-4 text-primary" />}
+              {watchEditIsComm ? "Edit Communication Sale" : "Edit Pending Transaction"}
+            </DialogTitle>
+            <DialogDescription>
+              {watchEditIsComm
+                ? "Modify item, pricing, or cross-branch transfer details before verification"
+                : "Modify record before verification review"}
+            </DialogDescription>
           </DialogHeader>
 
           <form onSubmit={editForm.handleSubmit(onEditSubmit)} className="space-y-4 py-2">
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold uppercase text-muted-foreground">Date</label>
-                <Input type="date" {...editForm.register("date")} className="h-9 text-xs" />
-              </div>
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold uppercase text-muted-foreground">Bill Number</label>
-                <Input {...editForm.register("billNumber")} className="h-9 text-xs font-mono" />
-              </div>
-            </div>
+            {watchEditIsComm ? (
+              <>
+                {/* COMMUNICATION ITEM FIELDS */}
+                <div className="p-3.5 rounded-xl border border-border bg-card space-y-3">
+                  <span className="text-xs font-bold uppercase text-primary tracking-wider flex items-center gap-1.5">
+                    <SparklesIcon className="size-3.5" />
+                    Item &amp; Pricing Details
+                  </span>
 
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold uppercase text-muted-foreground">Category</label>
-                <select
-                  {...editForm.register("category")}
-                  className="w-full h-9 rounded-md border border-border bg-card text-foreground px-3 text-xs font-medium outline-none focus:border-ring [color-scheme:light] dark:[color-scheme:dark]"
-                >
-                  {categories.map((cat) => (
-                    <option key={cat._id} value={cat._id} className="bg-white text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100">
-                      {cat.name} ({cat.type})
-                    </option>
-                  ))}
-                </select>
-              </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                    <div className="space-y-1">
+                      <label className="text-[11px] font-semibold text-muted-foreground uppercase">
+                        Item Code
+                      </label>
+                      <Input
+                        placeholder="e.g. 0010"
+                        {...editForm.register("itemCode")}
+                        className="h-9 text-xs font-mono"
+                      />
+                    </div>
+                    <div className="space-y-1 sm:col-span-2">
+                      <label className="text-[11px] font-semibold text-muted-foreground uppercase">
+                        Item Name *
+                      </label>
+                      <Input
+                        placeholder="Item name..."
+                        {...editForm.register("itemName")}
+                        className="h-9 text-xs font-medium"
+                      />
+                    </div>
+                  </div>
 
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold uppercase text-muted-foreground">Payment Method</label>
-                <select
-                  {...editForm.register("paymentMethod")}
-                  className="w-full h-9 rounded-md border border-border bg-card text-foreground px-3 text-xs font-medium outline-none focus:border-ring [color-scheme:light] dark:[color-scheme:dark]"
-                >
-                  <option value="CASH" className="bg-white text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100">Cash</option>
-                  <option value="PETTY_CASH" className="bg-white text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100">Petty Cash</option>
-                  <option value="BANK_TRANSFER" className="bg-white text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100">Bank Transfer</option>
-                  <option value="CHEQUE" className="bg-white text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100">Cheque</option>
-                  <option value="ONLINE" className="bg-white text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100">Online</option>
-                </select>
-              </div>
-            </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 pt-1">
+                    <div className="space-y-1">
+                      <label className="text-[11px] font-semibold text-muted-foreground uppercase">
+                        Quantity *
+                      </label>
+                      <Input
+                        type="number"
+                        min="1"
+                        step="1"
+                        {...editForm.register("quantity", { valueAsNumber: true })}
+                        className="h-9 text-xs font-mono font-semibold"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[11px] font-semibold text-muted-foreground uppercase">
+                        Unit Price (LKR) *
+                      </label>
+                      <Input
+                        type="number"
+                        min="0"
+                        step="any"
+                        placeholder="0.00"
+                        {...editForm.register("sellingPrice", { valueAsNumber: true })}
+                        className="h-9 text-xs font-mono font-semibold"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[11px] font-semibold text-muted-foreground uppercase">
+                        Unit Cost (LKR)
+                      </label>
+                      <Input
+                        type="number"
+                        min="0"
+                        step="any"
+                        placeholder="0.00"
+                        {...editForm.register("actualPrice", { valueAsNumber: true })}
+                        className="h-9 text-xs font-mono"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[11px] font-semibold text-muted-foreground uppercase">
+                        Discount (LKR)
+                      </label>
+                      <Input
+                        type="number"
+                        min="0"
+                        step="any"
+                        placeholder="0.00"
+                        {...editForm.register("discountPrice", { valueAsNumber: true })}
+                        className="h-9 text-xs font-mono"
+                      />
+                    </div>
+                  </div>
 
-            <div className="space-y-1.5">
-              <label className="text-xs font-semibold uppercase text-muted-foreground">Amount (LKR)</label>
-              <Input
-                type="number"
-                step="any"
-                {...editForm.register("amount", { valueAsNumber: true })}
-                className="h-9 text-xs font-mono"
-              />
-            </div>
+                  <div className="flex items-center justify-between p-2.5 rounded-lg border border-emerald-500/20 bg-emerald-500/5 text-xs font-mono">
+                    <span className="font-sans font-medium text-foreground">Calculated Net Total:</span>
+                    <span className="font-bold text-emerald-600 dark:text-emerald-400 text-sm">
+                      LKR {Math.max(0, (watchEditQty * watchEditSelling) - watchEditDiscount).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                </div>
 
-            <div className="space-y-1.5">
-              <label className="text-xs font-semibold uppercase text-muted-foreground">Reason</label>
-              <Textarea {...editForm.register("reason")} className="text-xs" rows={3} />
-            </div>
+                {/* CROSS-BRANCH TRANSFER EDIT */}
+                <div className="p-3.5 rounded-xl border border-border bg-card space-y-3">
+                  <label className="flex items-center gap-2 cursor-pointer text-xs font-semibold text-foreground select-none">
+                    <input
+                      type="checkbox"
+                      {...editForm.register("isRelatedToBranch")}
+                      className="size-4 rounded border-border text-primary focus:ring-primary"
+                    />
+                    <span>Is this transaction related to another branch / shop?</span>
+                  </label>
+
+                  {watchEditIsBranch && (
+                    <div className="p-3 rounded-lg border border-amber-500/30 bg-amber-500/10 space-y-2.5">
+                      <div className="flex items-center gap-1.5 text-xs text-amber-700 dark:text-amber-400 font-semibold">
+                        <AlertTriangleIcon className="size-3.5" />
+                        Cross-Branch Transfer: Requires Verifier Review &amp; Approval
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div className="space-y-1">
+                          <label className="text-[10px] uppercase font-semibold text-muted-foreground">
+                            Related Branch / Shop *
+                          </label>
+                          <select
+                            {...editForm.register("relatedBranch")}
+                            className="w-full h-8 rounded-md border border-border bg-card text-foreground px-2 text-xs font-medium outline-none focus:border-ring [color-scheme:light] dark:[color-scheme:dark]"
+                          >
+                            <option value="" className="bg-white text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100">
+                              Select Branch / Shop...
+                            </option>
+                            {activeShops
+                              .filter((s) => s._id !== userShopId)
+                              .map((s) => (
+                                <option
+                                  key={s._id}
+                                  value={s._id}
+                                  className="bg-white text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100"
+                                >
+                                  {s.name} ({s.code})
+                                </option>
+                              ))}
+                          </select>
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[10px] uppercase font-semibold text-muted-foreground">
+                            Transfer / Cross-Branch Note
+                          </label>
+                          <Input
+                            placeholder="Reason for cross-branch transfer / note..."
+                            {...editForm.register("relatedBranchNote")}
+                            className="h-8 text-xs bg-background"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* TRANSACTION METADATA */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold uppercase text-muted-foreground">Date</label>
+                    <Input type="date" {...editForm.register("date")} className="h-9 text-xs" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold uppercase text-muted-foreground">Bill Number</label>
+                    <Input {...editForm.register("billNumber")} className="h-9 text-xs font-mono" />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold uppercase text-muted-foreground">Category</label>
+                    <select
+                      {...editForm.register("category")}
+                      className="w-full h-9 rounded-md border border-border bg-card text-foreground px-3 text-xs font-medium outline-none focus:border-ring [color-scheme:light] dark:[color-scheme:dark]"
+                    >
+                      {categories.map((cat) => (
+                        <option key={cat._id} value={cat._id} className="bg-white text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100">
+                          {cat.name} ({cat.type})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold uppercase text-muted-foreground">Payment Method</label>
+                    <select
+                      {...editForm.register("paymentMethod")}
+                      className="w-full h-9 rounded-md border border-border bg-card text-foreground px-3 text-xs font-medium outline-none focus:border-ring [color-scheme:light] dark:[color-scheme:dark]"
+                    >
+                      <option value="CASH" className="bg-white text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100">Cash</option>
+                      <option value="PETTY_CASH" className="bg-white text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100">Petty Cash</option>
+                      <option value="BANK_TRANSFER" className="bg-white text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100">Bank Transfer</option>
+                      <option value="CHEQUE" className="bg-white text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100">Cheque</option>
+                      <option value="ONLINE" className="bg-white text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100">Online</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold uppercase text-muted-foreground">Reason / Description</label>
+                  <Textarea {...editForm.register("reason")} className="text-xs" rows={2} />
+                </div>
+              </>
+            ) : (
+              /* STANDARD FORM (NON-COMMUNICATION) */
+              <>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold uppercase text-muted-foreground">Date</label>
+                    <Input type="date" {...editForm.register("date")} className="h-9 text-xs" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold uppercase text-muted-foreground">Bill Number</label>
+                    <Input {...editForm.register("billNumber")} className="h-9 text-xs font-mono" />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold uppercase text-muted-foreground">Category</label>
+                    <select
+                      {...editForm.register("category")}
+                      className="w-full h-9 rounded-md border border-border bg-card text-foreground px-3 text-xs font-medium outline-none focus:border-ring [color-scheme:light] dark:[color-scheme:dark]"
+                    >
+                      {categories.map((cat) => (
+                        <option key={cat._id} value={cat._id} className="bg-white text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100">
+                          {cat.name} ({cat.type})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold uppercase text-muted-foreground">Payment Method</label>
+                    <select
+                      {...editForm.register("paymentMethod")}
+                      className="w-full h-9 rounded-md border border-border bg-card text-foreground px-3 text-xs font-medium outline-none focus:border-ring [color-scheme:light] dark:[color-scheme:dark]"
+                    >
+                      <option value="CASH" className="bg-white text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100">Cash</option>
+                      <option value="PETTY_CASH" className="bg-white text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100">Petty Cash</option>
+                      <option value="BANK_TRANSFER" className="bg-white text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100">Bank Transfer</option>
+                      <option value="CHEQUE" className="bg-white text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100">Cheque</option>
+                      <option value="ONLINE" className="bg-white text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100">Online</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold uppercase text-muted-foreground">Amount (LKR)</label>
+                  <Input
+                    type="number"
+                    step="any"
+                    {...editForm.register("amount", { valueAsNumber: true })}
+                    className="h-9 text-xs font-mono"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold uppercase text-muted-foreground">Reason</label>
+                  <Textarea {...editForm.register("reason")} className="text-xs" rows={3} />
+                </div>
+              </>
+            )}
 
             <DialogFooter className="pt-2">
               <Button type="button" variant="outline" size="sm" onClick={() => setEditOpen(false)}>
                 Cancel
               </Button>
               <Button type="submit" size="sm" disabled={editForm.formState.isSubmitting}>
+                {editForm.formState.isSubmitting ? <Loader2Icon className="size-3.5 animate-spin mr-1" /> : null}
                 Save Modifications
               </Button>
             </DialogFooter>

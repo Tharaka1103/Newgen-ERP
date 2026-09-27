@@ -334,12 +334,13 @@ export async function updateFinanceRecordAction(formData: unknown) {
       return { success: false, error: "Record not found." };
     }
 
-    // Staff can only edit PENDING records they created
+    // Staff can only edit PENDING records they created OR communication records not yet reviewed by a verifier
     if (role === "STAFF") {
       if (record.createdBy.toString() !== session.user.id) {
         return { success: false, error: "You can only edit records you created." };
       }
-      if (record.status !== "PENDING" || record.isLocked) {
+      const isCommEditable = record.isCommunicationItem && !record.reviewedBy;
+      if (!isCommEditable && (record.status !== "PENDING" || record.isLocked)) {
         return {
           success: false,
           error: "This record has already been reviewed and locked. Editing is restricted.",
@@ -357,11 +358,52 @@ export async function updateFinanceRecordAction(formData: unknown) {
     record.paymentMethod = result.data.paymentMethod;
     if (result.data.bankAccount) {
       record.bankAccount = new mongoose.Types.ObjectId(result.data.bankAccount);
+    } else {
+      record.bankAccount = null;
     }
     record.billNumber = result.data.billNumber.trim();
     record.reason = result.data.reason.trim();
     record.amount = result.data.amount;
     record.type = result.data.type;
+
+    // Update Communication fields
+    if (result.data.isCommunicationItem !== undefined) {
+      record.isCommunicationItem = Boolean(result.data.isCommunicationItem);
+    }
+    if (result.data.itemName !== undefined) {
+      record.itemName = result.data.itemName ? result.data.itemName.trim() : null;
+    }
+    if (result.data.itemCode !== undefined) {
+      record.itemCode = result.data.itemCode ? result.data.itemCode.trim().toUpperCase() : null;
+    }
+    if (result.data.quantity !== undefined) {
+      record.quantity = Number(result.data.quantity || 1);
+    }
+    if (result.data.actualPrice !== undefined) {
+      record.actualPrice = Number(result.data.actualPrice || 0);
+    }
+    if (result.data.sellingPrice !== undefined) {
+      record.sellingPrice = Number(result.data.sellingPrice || 0);
+    }
+    if (result.data.discountPrice !== undefined) {
+      record.discountPrice = Number(result.data.discountPrice || 0);
+    }
+    if (result.data.isRelatedToBranch !== undefined) {
+      record.isRelatedToBranch = Boolean(result.data.isRelatedToBranch);
+      record.relatedBranch = result.data.isRelatedToBranch && result.data.relatedBranch
+        ? new mongoose.Types.ObjectId(result.data.relatedBranch)
+        : null;
+      record.relatedBranchNote = result.data.isRelatedToBranch
+        ? (result.data.relatedBranchNote || "").trim()
+        : "";
+
+      // If marked related to another branch, set status to PENDING for verifier review
+      if (record.isRelatedToBranch && record.status === "APPROVED") {
+        record.status = "PENDING";
+        record.approvedAmount = null;
+        record.isLocked = false;
+      }
+    }
 
     await record.save();
 
@@ -582,6 +624,7 @@ export async function createCommunicationSaleBatchAction(payload: {
     itemName: string;
     quantity: number;
     actualPrice: number;
+    sellingPrice?: number;
     totalPrice: number;
     discountPrice: number;
     amount: number;
@@ -621,10 +664,28 @@ export async function createCommunicationSaleBatchAction(payload: {
     const recordStatus: "PENDING" | "APPROVED" = isBranchRelated ? "PENDING" : "APPROVED";
     const isLocked = !isBranchRelated;
 
-    // Default INCOME category
-    let category = await Category.findOne({ type: "INCOME", isActive: true });
+    // Find or create "Communication Items" INCOME category
+    let category = await Category.findOne({
+      name: { $regex: /^communication items$/i },
+      type: "INCOME",
+      isActive: true,
+    });
     if (!category) {
-      category = await Category.findOne({ isActive: true });
+      category = await Category.findOne({
+        name: { $regex: /^communication/i },
+        type: "INCOME",
+        isActive: true,
+      });
+    }
+    if (!category) {
+      category = await Category.create({
+        name: "Communication Items",
+        description: "Revenue from communication shop sales and services",
+        type: "INCOME",
+        colorToken: "chart-1",
+        isActive: true,
+        createdBy: new mongoose.Types.ObjectId(session.user.id),
+      });
     }
 
     const now = new Date();
@@ -644,7 +705,9 @@ export async function createCommunicationSaleBatchAction(payload: {
     for (const item of payload.items) {
       const netAmount = Math.max(0, Number(item.amount) || Number(item.totalPrice) - Number(item.discountPrice || 0));
       grandTotal += netAmount;
-      const unitSelling = item.quantity > 0 ? Number((item.totalPrice / item.quantity).toFixed(2)) : item.totalPrice;
+      const unitSelling = item.sellingPrice !== undefined && item.sellingPrice > 0
+        ? Number(item.sellingPrice)
+        : (item.quantity > 0 ? Number((item.totalPrice / item.quantity).toFixed(2)) : item.totalPrice);
 
       await FinanceRecord.create({
         date: now,
