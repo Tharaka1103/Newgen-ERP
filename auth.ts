@@ -1,6 +1,7 @@
 import NextAuth from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import bcrypt from "bcryptjs";
+import mongoose from "mongoose";
 import { authConfig } from "./auth.config";
 import connectDB from "./lib/mongodb";
 import { User } from "./models/User";
@@ -48,20 +49,53 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         await User.updateOne({ _id: user._id }, { $set: { lastLoginAt: new Date() } });
 
         let shopName: string | null = null;
-        if (user.shop) {
-          const shopDoc = await Shop.findById(user.shop).select("name").lean();
+        let assignedShops: Array<{ _id: string; name: string; code: string; shopType?: string }> = [];
+
+        if (user.shops && user.shops.length > 0) {
+          const shopDocs = await Shop.find({ _id: { $in: user.shops }, isActive: true })
+            .select("name code shopType")
+            .lean();
+          assignedShops = shopDocs.map((s) => ({
+            _id: s._id.toString(),
+            name: s.name,
+            code: s.code,
+            shopType: (s as any).shopType || "STANDARD",
+          }));
+        } else if (user.shop) {
+          const shopDoc = await Shop.findById(user.shop).select("name code shopType").lean();
           if (shopDoc) {
-            shopName = shopDoc.name;
+            assignedShops = [
+              {
+                _id: shopDoc._id.toString(),
+                name: shopDoc.name,
+                code: shopDoc.code,
+                shopType: (shopDoc as any).shopType || "STANDARD",
+              },
+            ];
+            await User.updateOne({ _id: user._id }, { $set: { shops: [user.shop] } });
           }
         }
+
+        let activeShopId: string | null = user.shop ? user.shop.toString() : null;
+        let activeShop = assignedShops.find((s) => s._id === activeShopId);
+        if (!activeShop && assignedShops.length > 0) {
+          activeShop = assignedShops[0];
+          activeShopId = activeShop._id;
+          await User.updateOne(
+            { _id: user._id },
+            { $set: { shop: new mongoose.Types.ObjectId(activeShopId) } }
+          );
+        }
+        shopName = activeShop ? activeShop.name : null;
 
         return {
           id: user._id.toString(),
           name: user.name,
           email: user.email,
           role: user.role,
-          shop: user.shop ? user.shop.toString() : null,
+          shop: activeShopId,
           shopName,
+          shops: assignedShops,
         };
       },
     }),

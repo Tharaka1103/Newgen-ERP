@@ -9,6 +9,7 @@ export interface IUser extends Document {
   avatarUrl?: string | null;
   role: "STAFF" | "VERIFIER" | "ADMIN";
   shop?: mongoose.Types.ObjectId | null;
+  shops?: mongoose.Types.ObjectId[];
   isActive: boolean;
   lastLoginAt?: Date | null;
   createdBy?: mongoose.Types.ObjectId | null;
@@ -54,6 +55,12 @@ const UserSchema = new Schema<IUser>(
       ref: "Shop",
       default: null,
     },
+    shops: [
+      {
+        type: Schema.Types.ObjectId,
+        ref: "Shop",
+      },
+    ],
     isActive: {
       type: Boolean,
       default: true,

@@ -53,7 +53,10 @@ export async function getFinanceRecordsAction(params: GetFinanceRecordsParams = 
 
     // RBAC: Staff can strictly ONLY view their assigned shop's records
     if (role === "STAFF") {
-      if (!userShop) {
+      const dbUser = await User.findById(session.user.id).select("shop shops").lean();
+      const activeShopId = dbUser?.shop ? dbUser.shop.toString() : userShop;
+
+      if (!activeShopId) {
         return {
           success: true,
           records: [],
@@ -63,7 +66,7 @@ export async function getFinanceRecordsAction(params: GetFinanceRecordsParams = 
           unassignedStaff: true,
         };
       }
-      query.shop = new mongoose.Types.ObjectId(userShop);
+      query.shop = new mongoose.Types.ObjectId(activeShopId);
     } else {
       // Verifier and Admin can filter by any shop
       if (params.shopId && params.shopId !== "ALL") {
@@ -198,8 +201,24 @@ export async function createFinanceRecordAction(formData: unknown) {
   try {
     await connectDB();
 
-    // If STAFF, strictly force their assigned shop
-    const shopId = role === "STAFF" ? userShop : result.data.shop;
+    // If STAFF, strictly resolve active or assigned shop
+    let shopId: string | undefined = result.data.shop;
+    if (role === "STAFF") {
+      const dbUser = await User.findById(session.user.id).select("shop shops").lean();
+      const currentActiveShop = dbUser?.shop ? dbUser.shop.toString() : userShop;
+      const assignedIds = (dbUser?.shops || []).map((s: any) => s.toString());
+      if (currentActiveShop) assignedIds.push(currentActiveShop);
+
+      if (result.data.shop && assignedIds.includes(result.data.shop)) {
+        shopId = result.data.shop;
+      } else {
+        shopId = currentActiveShop;
+      }
+    }
+
+    if (!shopId) {
+      return { success: false, error: "Please select or switch to an assigned branch." };
+    }
 
     const shop = await Shop.findById(shopId);
     if (!shop || !shop.isActive) {
@@ -708,6 +727,17 @@ export async function createCommunicationSaleBatchAction(payload: {
   const role = (session.user as { role?: string }).role;
   if (role !== "STAFF" && !isAdmin(session.user as any)) {
     return { success: false, error: "Only assigned staff can record sales." };
+  }
+
+  if (role === "STAFF") {
+    const dbUser = await User.findById(session.user.id).select("shop shops").lean();
+    const currentActiveShop = dbUser?.shop ? dbUser.shop.toString() : (session.user as any).shop;
+    const assignedIds = (dbUser?.shops || []).map((s: any) => s.toString());
+    if (currentActiveShop) assignedIds.push(currentActiveShop);
+
+    if (!assignedIds.includes(payload.shopId)) {
+      return { success: false, error: "You are not assigned to this branch." };
+    }
   }
 
   if (!payload.items || payload.items.length === 0) {

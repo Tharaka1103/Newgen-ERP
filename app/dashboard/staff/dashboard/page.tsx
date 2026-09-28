@@ -1,4 +1,6 @@
 import { auth } from "@/auth";
+import connectDB from "@/lib/mongodb";
+import { User } from "@/models/User";
 import { getSummaryAnalyticsAction } from "@/actions/reports";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { StatusBadge } from "@/components/shared/status-badge";
@@ -19,8 +21,18 @@ import {
 
 export default async function StaffDashboardPage() {
   const session = await auth();
-  const userShopId = (session?.user as { shop?: string | null })?.shop || null;
-  const userShopName = (session?.user as { shopName?: string | null })?.shopName || null;
+
+  await connectDB();
+  const dbUser = session?.user?.id
+    ? await User.findById(session.user.id).populate("shop", "name code").lean()
+    : null;
+
+  const userShopId = dbUser?.shop
+    ? (dbUser.shop as any)._id?.toString() || dbUser.shop.toString()
+    : (session?.user as { shop?: string | null })?.shop || null;
+  const userShopName = dbUser?.shop
+    ? (dbUser.shop as any).name || null
+    : (session?.user as { shopName?: string | null })?.shopName || null;
 
   const res = await getSummaryAnalyticsAction({ period: "month" });
 

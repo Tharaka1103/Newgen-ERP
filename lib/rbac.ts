@@ -7,6 +7,7 @@ export interface SessionUser {
   role: UserRole;
   shop?: string | null;
   shopName?: string | null;
+  shops?: Array<{ _id: string; name: string; code: string; shopType?: string }>;
 }
 
 export const ROLES = {
@@ -42,7 +43,7 @@ export function isStaff(userOrRole?: SessionUser | { role?: string | null } | st
 export function canCreateFinanceRecord(user?: SessionUser | null): boolean {
   if (!user) return false;
   if (user.role === ROLES.ADMIN) return true;
-  if (user.role === ROLES.STAFF && Boolean(user.shop)) return true;
+  if (user.role === ROLES.STAFF && (Boolean(user.shop) || Boolean(user.shops && user.shops.length > 0))) return true;
   return false;
 }
 

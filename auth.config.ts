@@ -16,11 +16,13 @@ export const authConfig = {
         token.role = (user as any).role;
         token.shop = (user as any).shop;
         token.shopName = (user as any).shopName;
+        token.shops = (user as any).shops || [];
       }
       if (trigger === "update" && session) {
         if (session.user?.name) token.name = session.user.name;
         if (session.user?.shop !== undefined) token.shop = session.user.shop;
         if (session.user?.shopName !== undefined) token.shopName = session.user.shopName;
+        if ((session.user as any)?.shops !== undefined) token.shops = (session.user as any).shops;
       }
       return token;
     },
@@ -30,6 +32,7 @@ export const authConfig = {
         (session.user as any).role = token.role;
         (session.user as any).shop = token.shop;
         (session.user as any).shopName = token.shopName;
+        (session.user as any).shops = (token as any).shops || [];
       }
       return session;
     },

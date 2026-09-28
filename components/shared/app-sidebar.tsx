@@ -4,7 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { DashboardCardVisual } from "@/components/shared/dashboard-card-visual";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import {
   Sidebar,
   SidebarContent,
@@ -20,6 +20,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { logoutAction } from "@/actions/auth";
+import { switchActiveShopAction } from "@/actions/users";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -56,13 +57,59 @@ interface AppSidebarProps {
     role: "STAFF" | "VERIFIER" | "ADMIN" | string;
     shop?: string | null;
     shopName?: string | null;
+    shops?: Array<{ _id: string; name: string; code: string; shopType?: string }>;
   };
 }
 
 export function AppSidebar({ user }: AppSidebarProps) {
   const pathname = usePathname();
+  const router = useRouter();
   const [logoutDialogOpen, setLogoutDialogOpen] = React.useState(false);
   const [isLoggingOut, setIsLoggingOut] = React.useState(false);
+  const [isSwitchingShop, setIsSwitchingShop] = React.useState(false);
+  const [selectedShopId, setSelectedShopId] = React.useState(user.shop || "");
+
+  React.useEffect(() => {
+    if (user.shop) {
+      setSelectedShopId(user.shop);
+    }
+  }, [user.shop]);
+
+  const handleShopChange = async (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const newShopId = e.target.value;
+    if (!newShopId || newShopId === user.shop || isSwitchingShop) return;
+
+    setSelectedShopId(newShopId);
+    setIsSwitchingShop(true);
+
+    try {
+      const res = await switchActiveShopAction(newShopId);
+      if (res.success) {
+        toast.create({
+          title: "Active Branch Switched",
+          description: `Switched active branch to ${res.shopName}. Refreshing views...`,
+        });
+        router.refresh();
+      } else {
+        setSelectedShopId(user.shop || "");
+        toast.create({
+          title: "Switch Failed",
+          description: res.error || "Could not switch branch.",
+          type: "error",
+        });
+      }
+    } catch (err) {
+      console.error("Failed to switch branch:", err);
+      setSelectedShopId(user.shop || "");
+      toast.create({
+        title: "Error",
+        description: "An unexpected error occurred while switching branches.",
+        type: "error",
+      });
+    } finally {
+      setIsSwitchingShop(false);
+    }
+  };
 
   const handleLogout = async (e?: React.MouseEvent) => {
     if (e) e.preventDefault();
@@ -182,16 +229,54 @@ export function AppSidebar({ user }: AppSidebarProps) {
 
       <SidebarFooter className="border-t border-sidebar-border p-3 space-y-2.5">
         {user.role === "STAFF" && (
-          <div className="rounded-lg bg-card/60 p-2.5 border border-border/60 text-xs">
-            <div className="text-muted-foreground font-medium">Assigned Branch:</div>
-            <div className="mt-1 flex items-center justify-between">
-              <span className="font-semibold text-foreground truncate">
-                {user.shopName || "Unassigned"}
+          <div className="rounded-lg bg-card/70 p-2.5 border border-border text-xs space-y-1.5 shadow-xs">
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                <Building2Icon className="size-3.5 text-primary" />
+                <span>Active Branch</span>
               </span>
-              <Badge variant="outline" className="text-[10px] uppercase font-mono">
-                Staff
-              </Badge>
+              {user.shops && user.shops.length > 1 ? (
+                <Badge variant="secondary" className="text-[10px] font-mono px-1.5 py-0 bg-primary/10 text-primary border-primary/20">
+                  {user.shops.length} Assigned
+                </Badge>
+              ) : (
+                <Badge variant="outline" className="text-[10px] uppercase font-mono">
+                  Staff
+                </Badge>
+              )}
             </div>
+
+            {user.shops && user.shops.length > 1 ? (
+              <div className="relative">
+                <select
+                  value={selectedShopId}
+                  onChange={handleShopChange}
+                  disabled={isSwitchingShop}
+                  className="w-full h-8.5 rounded-md border border-border bg-background text-foreground px-2 text-xs font-medium outline-none focus:border-ring transition-colors [color-scheme:light] dark:[color-scheme:dark] cursor-pointer disabled:opacity-60 pr-7"
+                >
+                  {user.shops.map((s) => (
+                    <option
+                      key={s._id}
+                      value={s._id}
+                      className="bg-white text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100 font-medium"
+                    >
+                      {s.name} ({s.code})
+                    </option>
+                  ))}
+                </select>
+                {isSwitchingShop && (
+                  <div className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none">
+                    <Loader2Icon className="size-3.5 animate-spin text-primary" />
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="flex items-center justify-between pt-0.5">
+                <span className="font-semibold text-foreground truncate">
+                  {user.shopName || (user.shops && user.shops[0]?.name) || "Unassigned"}
+                </span>
+              </div>
+            )}
           </div>
         )}
 

@@ -67,7 +67,10 @@ export async function getSummaryAnalyticsAction(params: AnalyticsParams = {}) {
     };
 
     if (role === "STAFF") {
-      if (!userShop) {
+      const dbUser = await User.findById(session.user.id).select("shop").lean();
+      const staffShop = dbUser?.shop ? dbUser.shop.toString() : userShop;
+
+      if (!staffShop) {
         return {
           success: true,
           kpis: {
@@ -85,7 +88,7 @@ export async function getSummaryAnalyticsAction(params: AnalyticsParams = {}) {
           records: [],
         };
       }
-      const staffShopObjId = new mongoose.Types.ObjectId(userShop);
+      const staffShopObjId = new mongoose.Types.ObjectId(staffShop);
       query.$or = [
         { shop: staffShopObjId, isCrossBranchPayment: { $ne: true } },
         { beneficiaryShop: staffShopObjId, isCrossBranchPayment: true },

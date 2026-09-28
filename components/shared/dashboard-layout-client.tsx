@@ -14,6 +14,7 @@ interface DashboardLayoutClientProps {
     role: "STAFF" | "VERIFIER" | "ADMIN" | string;
     shop?: string | null;
     shopName?: string | null;
+    shops?: Array<{ _id: string; name: string; code: string; shopType?: string }>;
   };
   children: React.ReactNode;
 }

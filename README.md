@@ -1,27 +1,48 @@
-# 📊 Newgen Multi-Branch Finance Management System (FMS)
+# 📊 Newgen Multi-Branch Finance Management & ERP System
 
-A production-ready, secure, role-based financial management web application built with **Next.js 16 (App Router)**, **Auth.js v5 (NextAuth)**, **shadcn/ui**, **Tailwind CSS (Theme Variables Only)**, and **MongoDB (Mongoose)**.
+An enterprise-grade, secure, multi-branch financial accounting and resource planning web application developed for **Newgen Online School (Pvt) Ltd.** by **Trimids (Pvt) Ltd.** Built with **Next.js 16 (App Router)**, **Auth.js v5 (NextAuth)**, **shadcn/ui**, **Tailwind CSS**, and **MongoDB (Mongoose)**.
 
-This system digitizes manual multi-branch ledger accounting (columns: Date, Branch, Payment Method, Bill No, Reason, Amount, Approval Status, Approved Amount, Running Balance) with an approval verification workflow and executive analytics.
+> 📄 **Official Legal Contract & Scope of Work:**  
+> Please see the complete formal contract: [**AGREEMENT.md**](file:///d:/Projects/Newgen-ERP/AGREEMENT.md) (Web Development Agreement between Trimids (Pvt) Ltd. and Newgen Online School (Pvt) Ltd. - Ref: `AGR-2026-NOS-001`).
+
+---
+
+## 🏛️ Project Stakeholders & Parties
+
+| Role | Organization | Representative | Contact |
+|---|---|---|---|
+| **Client** | **Newgen Online School (Pvt) Ltd.**<br/>No: 14/A, Poojapitiya Rd, Ankumbura | **Mr. Shalika Karunarathne**<br/>Owner & CEO | (+94) 71 274 9301 |
+| **Service Provider** | **Trimids (Pvt) Ltd.** (PV 00344750)<br/>No: 55/1B, Kirigampamunuwa, Polgasowita, Kottawa | **Mr. Tharaka Dharmasiri**<br/>Director & CEO | (+94) 78 149 8152<br/>hi@trimids.com |
 
 ---
 
 ## 🚀 Key Highlights & Architectural Features
 
+- **Multi-Branch Operations & Cash Drawer Tracking**:
+  - Independent cash drawers and ledger tracking for Danuma, Arunalu, Vition, Newgen Online School, Matale, Ankumbura, and Teachers Center.
+  - Chronological running balance engine (`lib/balance.ts`) recalculating balances instantly upon creation, review, or edit.
+- **Inter-Branch & Cross-Branch Settlement Engine**:
+  - Allows customers to pay tuition fees, retail bills, or credit debts at Branch A on behalf of Branch B.
+  - Automatically isolates physical cash drawer attribution (Branch A) from revenue attribution (Branch B).
+  - Admin settlement workflows: Physical Cash Handover, Direct Company Bank Deposit, and Mutual Debt Offset.
+- **Retail & Communication Sales Ledger with Profit Analytics**:
+  - Barcode / item selection with hidden base unit cost (admin only) and automated selling profit calculation.
+  - Telecom operator recognition and analytics for **Dialog**, **Mobitel**, **Airtel**, and **Hutch** reloads.
+  - Dynamic timeframe filters (Today, This Week, This Month, This Year, Custom Date Range).
+- **Customer Credit Accounts & Debt Repayment**:
+  - Customer credit lines with transaction ledger, debt repayment, and printable/exportable account statements.
+  - Multi-branch credit repayment with verifier authorization safeguards.
+- **Multi-Bank Accounts & Petty Cash Management**:
+  - Full tracking of institutional bank accounts (BOC, Commercial Bank, HNB, Sampath, etc.) and branch petty cash floats.
 - **Strict Role-Based Access Control (RBAC)** across 3 tiers:
-  - 🛡️ **Administrator (`ADMIN`)**: Full organizational control, branch and category CRUD, user & role management, branch reassignment, audit logs, and executive analytics.
-  - 🔍 **Finance Verifier (`VERIFIER`)**: Audits financial records across all branches, authorizes or rejects entries with mandatory audit remarks, and can adjust approved amounts.
-  - 📝 **Finance Officer (`STAFF`)**: Bound strictly to a single assigned branch. Creates petty cash and fee collection records, and can edit/delete their own entries **only while in `PENDING` status**.
-- **Three-Layer Security Enforcement**:
-  1. **Next.js Middleware (`middleware.ts`)**: Edge-level route protection and role-based redirects.
-  2. **Server Actions Re-Validation**: Cryptographic token re-checks, least-privilege checks, and record lock safeguards (`isLocked` / `status === "PENDING"`).
-  3. **UI-Level Conditional Guarding**: Disabled action buttons with tooltips for locked transactions.
-- **Chronological Running Balance Algorithm**:
-  - Automatically recalculates cumulative balances per shop in chronological order upon create, edit, delete, or verification review (`lib/balance.ts`).
-- **Comprehensive Audit Trail**:
-  - Automatically logs every sensitive operation (`APPROVE_RECORD`, `REJECT_RECORD`, `ROLE_CHANGE`, `SHOP_REASSIGN`, `DELETE_RECORD`, etc.) with actor, timestamp, and metadata.
+  - 🛡️ **Administrator (`ADMIN`)**: Complete governance, bank management, inter-branch settlements, user management, and executive analytics.
+  - 🔍 **Finance Verifier (`VERIFIER`)**: Cross-branch verification queue to authorize or reject records and credit repayments with audit remarks.
+  - 📝 **Finance Officer (`STAFF`)**: Branch-restricted ledger entries, petty cash, communication sales, and debt collection. Records lock once approved.
+- **Immutable Audit Trail & Data Security**:
+  - Automatically records every sensitive operation (`APPROVE_RECORD`, `REJECT_RECORD`, `ROLE_CHANGE`, `SETTLEMENT_RECORDED`) with actor, timestamp, and diff metadata.
+  - NoSQL injection sanitization (`lib/sanitize.ts`), CSP headers, and password hashing via bcryptjs.
 - **100% Theme CSS Variables**:
-  - Built strictly using Tailwind CSS variables (`bg-background`, `bg-card`, `text-foreground`, `border-border`, `bg-primary`, `bg-chart-1..5`) without any hardcoded hex or RGB values.
+  - Modern, responsive, dark and light theme interface built with shadcn/ui and semantic tokens.
 
 ---
 
