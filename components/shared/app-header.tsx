@@ -25,6 +25,17 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { logoutAction } from "@/actions/auth";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { toast } from "@/components/ui/toast";
+import {
   SunIcon,
   MoonIcon,
   LogOutIcon,
@@ -33,6 +44,7 @@ import {
   ShieldCheckIcon,
   BuildingIcon,
   ClockIcon,
+  Loader2Icon,
 } from "lucide-react";
 
 interface AppHeaderProps {
@@ -50,6 +62,24 @@ export function AppHeader({ user }: AppHeaderProps) {
   const pathname = usePathname();
   const [isDark, setIsDark] = React.useState(false);
   const [profileOpen, setProfileOpen] = React.useState(false);
+  const [logoutDialogOpen, setLogoutDialogOpen] = React.useState(false);
+  const [isLoggingOut, setIsLoggingOut] = React.useState(false);
+
+  const handleLogout = async (e?: React.MouseEvent) => {
+    if (e) e.preventDefault();
+    setIsLoggingOut(true);
+    toast.create({
+      title: "Logging you out...",
+      description: "Please wait while we safely end your session.",
+      type: "info",
+    });
+    try {
+      await logoutAction();
+    } catch (err) {
+      console.error("Logout error:", err);
+      setIsLoggingOut(false);
+    }
+  };
 
   React.useEffect(() => {
     const savedTheme = localStorage.getItem("theme");
@@ -249,15 +279,60 @@ export function AppHeader({ user }: AppHeaderProps) {
                 <span>Full Settings</span>
               </Button>
 
-              <form action={logoutAction}>
-                <Button variant="destructive" size="sm" type="submit" className="gap-1.5">
-                  <LogOutIcon className="size-4" />
-                  <span>Log Out</span>
-                </Button>
-              </form>
+              <Button
+                variant="destructive"
+                size="sm"
+                type="button"
+                onClick={() => {
+                  setProfileOpen(false);
+                  setLogoutDialogOpen(true);
+                }}
+                className="gap-1.5 cursor-pointer"
+              >
+                <LogOutIcon className="size-4" />
+                <span>Log Out</span>
+              </Button>
             </div>
           </DialogContent>
         </Dialog>
+
+        {/* Logout Confirmation Alert Dialog */}
+        <AlertDialog
+          open={logoutDialogOpen}
+          onOpenChange={(open) => !isLoggingOut && setLogoutDialogOpen(open)}
+        >
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <div className="flex items-center gap-2 text-destructive">
+                <LogOutIcon className="size-5" />
+                <AlertDialogTitle>Confirm Logout</AlertDialogTitle>
+              </div>
+              <AlertDialogDescription>
+                Are you sure you want to log out of your session? Any unsaved changes in your current view may be lost.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={isLoggingOut}>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={handleLogout}
+                disabled={isLoggingOut}
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90 gap-2 font-semibold"
+              >
+                {isLoggingOut ? (
+                  <>
+                    <Loader2Icon className="size-4 animate-spin" />
+                    <span>Logging you out...</span>
+                  </>
+                ) : (
+                  <>
+                    <LogOutIcon className="size-4" />
+                    <span>Log Out</span>
+                  </>
+                )}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </div>
     </header>
   );

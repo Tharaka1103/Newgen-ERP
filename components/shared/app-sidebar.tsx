@@ -21,6 +21,17 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { logoutAction } from "@/actions/auth";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { toast } from "@/components/ui/toast";
+import {
   LayoutDashboardIcon,
   BarChart3Icon,
   UsersIcon,
@@ -34,6 +45,7 @@ import {
   WalletIcon,
   HistoryIcon,
   ArrowLeftRightIcon,
+  Loader2Icon,
 } from "lucide-react";
 
 interface AppSidebarProps {
@@ -49,6 +61,24 @@ interface AppSidebarProps {
 
 export function AppSidebar({ user }: AppSidebarProps) {
   const pathname = usePathname();
+  const [logoutDialogOpen, setLogoutDialogOpen] = React.useState(false);
+  const [isLoggingOut, setIsLoggingOut] = React.useState(false);
+
+  const handleLogout = async (e?: React.MouseEvent) => {
+    if (e) e.preventDefault();
+    setIsLoggingOut(true);
+    toast.create({
+      title: "Logging you out...",
+      description: "Please wait while we safely end your session.",
+      type: "info",
+    });
+    try {
+      await logoutAction();
+    } catch (err) {
+      console.error("Logout error:", err);
+      setIsLoggingOut(false);
+    }
+  };
 
   const adminNav = [
     { title: "Dashboard", href: "/dashboard/admin/dashboard", icon: LayoutDashboardIcon },
@@ -167,7 +197,7 @@ export function AppSidebar({ user }: AppSidebarProps) {
 
         {/* Version Number (positioned above the logout button) */}
         <div className="flex items-center justify-between text-[11px] text-muted-foreground px-1">
-          <span>v1.2.0</span>
+          <span>v1.4.2</span>
           <span className="flex items-center gap-1.5">
             <span className="text-[10px]">Online</span>
             <span className="size-1.5 rounded-full bg-green-400 animate-pulse" />
@@ -175,18 +205,55 @@ export function AppSidebar({ user }: AppSidebarProps) {
         </div>
 
         {/* Logout Button (at the very bottom) */}
-        <form action={logoutAction} className="w-full">
-          <Button
-            type="submit"
-            variant="destructive"
-            size="sm"
-            className="w-full justify-center gap-2 text-xs font-semibold h-8.5 rounded-lg"
-          >
-            <LogOutIcon className="size-3.5" />
-            <span>Log Out</span>
-          </Button>
-        </form>
+        <Button
+          type="button"
+          onClick={() => setLogoutDialogOpen(true)}
+          variant="destructive"
+          size="sm"
+          className="w-full justify-center gap-2 text-xs font-semibold h-8.5 rounded-lg cursor-pointer"
+        >
+          <LogOutIcon className="size-3.5" />
+          <span>Log Out</span>
+        </Button>
       </SidebarFooter>
+
+      {/* Logout Confirmation Dialog */}
+      <AlertDialog
+        open={logoutDialogOpen}
+        onOpenChange={(open) => !isLoggingOut && setLogoutDialogOpen(open)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <div className="flex items-center gap-2 text-destructive">
+              <LogOutIcon className="size-5" />
+              <AlertDialogTitle>Confirm Logout</AlertDialogTitle>
+            </div>
+            <AlertDialogDescription>
+              Are you sure you want to log out of your session? Any unsaved changes in your current view may be lost.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isLoggingOut}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleLogout}
+              disabled={isLoggingOut}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90 gap-2 font-semibold"
+            >
+              {isLoggingOut ? (
+                <>
+                  <Loader2Icon className="size-4 animate-spin" />
+                  <span>Logging you out...</span>
+                </>
+              ) : (
+                <>
+                  <LogOutIcon className="size-4" />
+                  <span>Log Out</span>
+                </>
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Sidebar>
   );
 }

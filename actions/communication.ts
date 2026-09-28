@@ -9,6 +9,8 @@ import { sanitizeInput } from "@/lib/sanitize";
 import {
   createCommunicationItemSchema,
   updateCommunicationItemSchema,
+  classifyTelecomOperator,
+  type TelecomOperator,
 } from "@/schemas/communication";
 import { isAdmin } from "@/lib/rbac";
 import { logAuditEvent } from "@/lib/audit";
@@ -252,6 +254,7 @@ export async function deleteCommunicationItemAction(itemId: string) {
   }
 }
 
+
 interface CommunicationAnalyticsParams {
   shopId: string;
   period?: "today" | "week" | "month" | "year" | "custom";
@@ -310,32 +313,73 @@ export async function getCommunicationAnalyticsAction(params: CommunicationAnaly
       query.itemCode = params.itemCodeFilter;
     }
 
-    const records = await FinanceRecord.find(query)
-      .populate("category", "name")
-      .populate("relatedBranch", "name code")
-      .populate("createdBy", "name")
-      .sort({ date: -1, createdAt: -1 })
-      .lean();
+    const [records, registeredItems] = await Promise.all([
+      FinanceRecord.find(query)
+        .populate("category", "name")
+        .populate("relatedBranch", "name code")
+        .populate("createdBy", "name")
+        .sort({ date: -1, createdAt: -1 })
+        .lean(),
+      CommunicationItem.find({ shop: shop._id }).lean(),
+    ]);
+
+    const registeredMap = new Map<string, any>();
+    for (const it of registeredItems) {
+      if (it.itemCode) {
+        registeredMap.set(it.itemCode.trim().toUpperCase(), it);
+      }
+    }
 
     let totalRevenue = 0;
     let totalCost = 0;
     let branchRelatedCount = 0;
     let nonBranchCount = 0;
 
-    const itemAggregationMap: Record<string, {
-      itemCode: string;
-      itemName: string;
-      quantity: number;
+    const telecomStatsMap: Record<TelecomOperator, {
+      operator: TelecomOperator;
+      name: string;
+      codePrefix: string;
       revenue: number;
       cost: number;
       profit: number;
+      quantity: number;
+      txCount: number;
+      marginPct: number;
+    }> = {
+      DIALOG: { operator: "DIALOG", name: "Dialog", codePrefix: "D", revenue: 0, cost: 0, profit: 0, quantity: 0, txCount: 0, marginPct: 0 },
+      MOBITEL: { operator: "MOBITEL", name: "Mobitel", codePrefix: "M", revenue: 0, cost: 0, profit: 0, quantity: 0, txCount: 0, marginPct: 0 },
+      AIRTEL: { operator: "AIRTEL", name: "Airtel", codePrefix: "A", revenue: 0, cost: 0, profit: 0, quantity: 0, txCount: 0, marginPct: 0 },
+      HUTCH: { operator: "HUTCH", name: "Hutch", codePrefix: "H", revenue: 0, cost: 0, profit: 0, quantity: 0, txCount: 0, marginPct: 0 },
+      OTHER: { operator: "OTHER", name: "Other Items & Services", codePrefix: "*", revenue: 0, cost: 0, profit: 0, quantity: 0, txCount: 0, marginPct: 0 },
+    };
+
+    const itemAggregationMap: Record<string, {
+      itemCode: string;
+      itemName: string;
+      operator: TelecomOperator;
+      quantity: number;
+      unitCost: number;
+      unitSellingPrice: number;
+      revenue: number;
+      cost: number;
+      profit: number;
+      marginPct: number;
     }> = {};
 
     for (const r of records) {
       if (r.status === "REJECTED") continue;
       const netVal = r.approvedAmount ?? r.amount;
       const qty = Number(r.quantity || 1);
-      const unitCost = Number(r.actualPrice || 0);
+
+      const codeKey = (r.itemCode || "").trim().toUpperCase() || "UNLISTED";
+      const regDoc = registeredMap.get(codeKey);
+      const itemName = r.itemName || regDoc?.name || r.reason || "General Item";
+
+      // If r.actualPrice is 0 or undefined, fallback to registered item actualPrice
+      let unitCost = Number(r.actualPrice ?? 0);
+      if (unitCost === 0 && regDoc && typeof regDoc.actualPrice === "number") {
+        unitCost = regDoc.actualPrice;
+      }
       const costVal = unitCost * qty;
 
       if (r.type === "INCOME") {
@@ -349,17 +393,25 @@ export async function getCommunicationAnalyticsAction(params: CommunicationAnaly
         nonBranchCount++;
       }
 
-      const codeKey = r.itemCode || "UNLISTED";
-      const nameKey = r.itemName || r.reason || "General Item";
+      const op = classifyTelecomOperator(codeKey);
+      telecomStatsMap[op].revenue += netVal;
+      telecomStatsMap[op].cost += costVal;
+      telecomStatsMap[op].profit += (netVal - costVal);
+      telecomStatsMap[op].quantity += qty;
+      telecomStatsMap[op].txCount += 1;
 
       if (!itemAggregationMap[codeKey]) {
         itemAggregationMap[codeKey] = {
           itemCode: codeKey,
-          itemName: nameKey,
+          itemName: itemName,
+          operator: op,
           quantity: 0,
+          unitCost: unitCost,
+          unitSellingPrice: regDoc?.sellingPrice || (qty > 0 ? Number((netVal / qty).toFixed(2)) : netVal),
           revenue: 0,
           cost: 0,
           profit: 0,
+          marginPct: 0,
         };
       }
 
@@ -369,6 +421,16 @@ export async function getCommunicationAnalyticsAction(params: CommunicationAnaly
       itemAggregationMap[codeKey].profit += (netVal - costVal);
     }
 
+    for (const item of Object.values(itemAggregationMap)) {
+      item.marginPct = item.revenue > 0 ? Number(((item.profit / item.revenue) * 100).toFixed(1)) : 0;
+    }
+
+    for (const opKey of Object.keys(telecomStatsMap) as TelecomOperator[]) {
+      const op = telecomStatsMap[opKey];
+      op.marginPct = op.revenue > 0 ? Number(((op.profit / op.revenue) * 100).toFixed(1)) : 0;
+    }
+
+    const telecomBreakdown = Object.values(telecomStatsMap);
     const netProfit = totalRevenue - totalCost;
     const itemBreakdown = Object.values(itemAggregationMap).sort((a, b) => b.revenue - a.revenue);
 
@@ -382,6 +444,7 @@ export async function getCommunicationAnalyticsAction(params: CommunicationAnaly
       nonBranchCount,
       records: JSON.parse(JSON.stringify(records)),
       itemBreakdown,
+      telecomBreakdown,
     };
   } catch (error) {
     console.error("Communication analytics error:", error);

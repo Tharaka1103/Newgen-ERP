@@ -77,6 +77,14 @@ import {
   FileTextIcon,
   CheckCircle2Icon,
   SearchIcon,
+  RadioIcon,
+  SmartphoneIcon,
+  FilterIcon,
+  SlidersHorizontalIcon,
+  ArrowUpDownIcon,
+  CalendarIcon,
+  TagIcon,
+  XIcon,
 } from "lucide-react";
 import { toast } from "@/components/ui/toast";
 import { useForm } from "react-hook-form";
@@ -86,6 +94,7 @@ import {
   updateCommunicationItemSchema,
   CreateCommunicationItemInput,
   UpdateCommunicationItemInput,
+  type TelecomOperator,
 } from "@/schemas/communication";
 
 interface AssignedStaff {
@@ -125,12 +134,22 @@ export function SingleShopView({
 }: SingleShopViewProps) {
   const isCommunication = initialShop.shopType === "COMMUNICATION";
 
-  const [activeTab, setActiveTab] = React.useState<"overview" | "items" | "credits" | "staff">("overview");
+  const [activeTab, setActiveTab] = React.useState<"overview" | "itemSales" | "items" | "credits" | "staff">("overview");
   const [period, setPeriod] = React.useState<"today" | "week" | "month" | "year" | "custom">("month");
   const [startDate, setStartDate] = React.useState<string>("");
   const [endDate, setEndDate] = React.useState<string>("");
   const [itemFilter, setItemFilter] = React.useState<string>("ALL");
   const [loading, setLoading] = React.useState<boolean>(false);
+
+  // Item-Wise Sales tab state
+  const [selectedOperatorFilter, setSelectedOperatorFilter] = React.useState<
+    "ALL" | TelecomOperator
+  >("ALL");
+  const [itemSearchQuery, setItemSearchQuery] = React.useState<string>("");
+  const [itemSortBy, setItemSortBy] = React.useState<
+    "revenue" | "profit" | "quantity" | "margin" | "code"
+  >("revenue");
+  const [itemSortOrder, setItemSortOrder] = React.useState<"asc" | "desc">("desc");
 
   const [shop, setShop] = React.useState(initialShop);
   const [staff, setStaff] = React.useState<AssignedStaff[]>(initialStaff);
@@ -171,6 +190,7 @@ export function SingleShopView({
     nonBranchCount: number;
     records: any[];
     itemBreakdown: any[];
+    telecomBreakdown?: any[];
   }>({
     totalRevenue: 0,
     totalCost: 0,
@@ -180,6 +200,7 @@ export function SingleShopView({
     nonBranchCount: 0,
     records: [],
     itemBreakdown: [],
+    telecomBreakdown: [],
   });
 
   // Modals for Communication Items
@@ -296,6 +317,7 @@ export function SingleShopView({
             nonBranchCount: commAnalyticsRes.nonBranchCount || 0,
             records: commAnalyticsRes.records || [],
             itemBreakdown: commAnalyticsRes.itemBreakdown || [],
+            telecomBreakdown: (commAnalyticsRes as any).telecomBreakdown || [],
           });
         }
         if (creditRes.success && creditRes.customers) {
@@ -516,6 +538,236 @@ export function SingleShopView({
     toast.create({
       title: "Export complete",
       description: `Downloaded ${recordsToExport.length} records for ${shop.name} in CSV format.`,
+      type: "success",
+    });
+  };
+
+  // Telecom Operator Branding & Style Config
+  const OPERATOR_STYLES: Record<string, {
+    color: string;
+    badgeBg: string;
+    borderClass: string;
+    activeRing: string;
+    accentText: string;
+    dotColor: string;
+  }> = {
+    DIALOG: {
+      color: "from-red-500/15 via-red-500/5 to-card",
+      badgeBg: "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/30",
+      borderClass: "border-red-500/25 hover:border-red-500/50",
+      activeRing: "ring-2 ring-red-500 border-red-500 shadow-lg shadow-red-500/10 bg-red-500/10",
+      accentText: "text-red-600 dark:text-red-400",
+      dotColor: "bg-red-500",
+    },
+    MOBITEL: {
+      color: "from-blue-500/15 via-blue-500/5 to-card",
+      badgeBg: "bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/30",
+      borderClass: "border-blue-500/25 hover:border-blue-500/50",
+      activeRing: "ring-2 ring-blue-500 border-blue-500 shadow-lg shadow-blue-500/10 bg-blue-500/10",
+      accentText: "text-blue-600 dark:text-blue-400",
+      dotColor: "bg-blue-500",
+    },
+    AIRTEL: {
+      color: "from-rose-500/15 via-rose-500/5 to-card",
+      badgeBg: "bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30",
+      borderClass: "border-rose-500/25 hover:border-rose-500/50",
+      activeRing: "ring-2 ring-rose-500 border-rose-500 shadow-lg shadow-rose-500/10 bg-rose-500/10",
+      accentText: "text-rose-600 dark:text-rose-400",
+      dotColor: "bg-rose-500",
+    },
+    HUTCH: {
+      color: "from-amber-500/15 via-amber-500/5 to-card",
+      badgeBg: "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30",
+      borderClass: "border-amber-500/25 hover:border-amber-500/50",
+      activeRing: "ring-2 ring-amber-500 border-amber-500 shadow-lg shadow-amber-500/10 bg-amber-500/10",
+      accentText: "text-amber-600 dark:text-amber-400",
+      dotColor: "bg-amber-500",
+    },
+    OTHER: {
+      color: "from-purple-500/15 via-purple-500/5 to-card",
+      badgeBg: "bg-purple-500/15 text-purple-600 dark:text-purple-400 border-purple-500/30",
+      borderClass: "border-purple-500/25 hover:border-purple-500/50",
+      activeRing: "ring-2 ring-purple-500 border-purple-500 shadow-lg shadow-purple-500/10 bg-purple-500/10",
+      accentText: "text-purple-600 dark:text-purple-400",
+      dotColor: "bg-purple-500",
+    },
+  };
+
+  const renderOperatorBadge = (operator?: string) => {
+    switch (operator) {
+      case "DIALOG":
+        return (
+          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-red-500/10 text-red-600 dark:text-red-400 border border-red-500/30">
+            <span className="size-1.5 rounded-full bg-red-500 inline-block animate-pulse" />
+            Dialog (D)
+          </span>
+        );
+      case "MOBITEL":
+        return (
+          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/30">
+            <span className="size-1.5 rounded-full bg-blue-500 inline-block animate-pulse" />
+            Mobitel (M)
+          </span>
+        );
+      case "AIRTEL":
+        return (
+          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/30">
+            <span className="size-1.5 rounded-full bg-rose-500 inline-block animate-pulse" />
+            Airtel (A)
+          </span>
+        );
+      case "HUTCH":
+        return (
+          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/30">
+            <span className="size-1.5 rounded-full bg-amber-500 inline-block animate-pulse" />
+            Hutch (H)
+          </span>
+        );
+      default:
+        return (
+          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/30">
+            <span className="size-1.5 rounded-full bg-purple-500 inline-block" />
+            Other Items
+          </span>
+        );
+    }
+  };
+
+  const telecomData = React.useMemo(() => {
+    if (commAnalytics.telecomBreakdown && commAnalytics.telecomBreakdown.length > 0) {
+      return commAnalytics.telecomBreakdown;
+    }
+    const map: Record<string, any> = {
+      DIALOG: { operator: "DIALOG", name: "Dialog", codePrefix: "D", revenue: 0, cost: 0, profit: 0, quantity: 0, txCount: 0, marginPct: 0 },
+      MOBITEL: { operator: "MOBITEL", name: "Mobitel", codePrefix: "M", revenue: 0, cost: 0, profit: 0, quantity: 0, txCount: 0, marginPct: 0 },
+      AIRTEL: { operator: "AIRTEL", name: "Airtel", codePrefix: "A", revenue: 0, cost: 0, profit: 0, quantity: 0, txCount: 0, marginPct: 0 },
+      HUTCH: { operator: "HUTCH", name: "Hutch", codePrefix: "H", revenue: 0, cost: 0, profit: 0, quantity: 0, txCount: 0, marginPct: 0 },
+      OTHER: { operator: "OTHER", name: "Other Items & Services", codePrefix: "*", revenue: 0, cost: 0, profit: 0, quantity: 0, txCount: 0, marginPct: 0 },
+    };
+    for (const it of commAnalytics.itemBreakdown || []) {
+      const op = it.operator || "OTHER";
+      if (map[op]) {
+        map[op].revenue += it.revenue || 0;
+        map[op].cost += it.cost || 0;
+        map[op].profit += it.profit || 0;
+        map[op].quantity += it.quantity || 0;
+        map[op].txCount += 1;
+      }
+    }
+    return Object.values(map).map((t: any) => ({
+      ...t,
+      marginPct: t.revenue > 0 ? Number(((t.profit / t.revenue) * 100).toFixed(1)) : 0,
+    }));
+  }, [commAnalytics.telecomBreakdown, commAnalytics.itemBreakdown]);
+
+  const filteredAndSortedItems = React.useMemo(() => {
+    let list = (commAnalytics.itemBreakdown || []) as Array<{
+      itemCode: string;
+      itemName: string;
+      operator: TelecomOperator;
+      quantity: number;
+      unitCost: number;
+      unitSellingPrice: number;
+      revenue: number;
+      cost: number;
+      profit: number;
+      marginPct: number;
+    }>;
+
+    if (selectedOperatorFilter !== "ALL") {
+      list = list.filter((it) => it.operator === selectedOperatorFilter);
+    }
+
+    if (itemSearchQuery.trim()) {
+      const q = itemSearchQuery.trim().toLowerCase();
+      list = list.filter(
+        (it) =>
+          it.itemCode?.toLowerCase().includes(q) ||
+          it.itemName?.toLowerCase().includes(q)
+      );
+    }
+
+    return [...list].sort((a, b) => {
+      let comparison = 0;
+      if (itemSortBy === "revenue") comparison = a.revenue - b.revenue;
+      else if (itemSortBy === "profit") comparison = a.profit - b.profit;
+      else if (itemSortBy === "quantity") comparison = a.quantity - b.quantity;
+      else if (itemSortBy === "margin") comparison = a.marginPct - b.marginPct;
+      else if (itemSortBy === "code") comparison = a.itemCode.localeCompare(b.itemCode);
+
+      return itemSortOrder === "desc" ? -comparison : comparison;
+    });
+  }, [commAnalytics.itemBreakdown, selectedOperatorFilter, itemSearchQuery, itemSortBy, itemSortOrder]);
+
+  const filteredTotals = React.useMemo(() => {
+    let qty = 0;
+    let rev = 0;
+    let cost = 0;
+    let profit = 0;
+    for (const it of filteredAndSortedItems) {
+      qty += it.quantity || 0;
+      rev += it.revenue || 0;
+      cost += it.cost || 0;
+      profit += it.profit || 0;
+    }
+    const margin = rev > 0 ? Number(((profit / rev) * 100).toFixed(1)) : 0;
+    return { qty, rev, cost, profit, margin };
+  }, [filteredAndSortedItems]);
+
+  const handleExportItemSalesCSV = () => {
+    const headers = [
+      "Item Code",
+      "Item Name",
+      "Operator",
+      "Quantity Sold",
+      "Base Cost (LKR)",
+      "Total Sales / Revenue (LKR)",
+      "Total Cost (LKR)",
+      "Net Profit (LKR)",
+      "Margin (%)",
+    ];
+
+    const rows = filteredAndSortedItems.map((item) => [
+      `"${item.itemCode}"`,
+      `"${(item.itemName || "").replace(/"/g, '""')}"`,
+      `"${item.operator}"`,
+      item.quantity,
+      item.unitCost || 0,
+      item.revenue || 0,
+      item.cost || 0,
+      item.profit || 0,
+      `"${item.marginPct || 0}%"`,
+    ]);
+
+    rows.push([
+      `"TOTALS"`,
+      `"Filtered Total (${filteredAndSortedItems.length} items)"`,
+      `"${selectedOperatorFilter}"`,
+      filteredTotals.qty,
+      "",
+      filteredTotals.rev,
+      filteredTotals.cost,
+      filteredTotals.profit,
+      `"${filteredTotals.margin}%"`,
+    ]);
+
+    const csvContent =
+      "data:text/csv;charset=utf-8," +
+      [headers.join(","), ...rows.map((e) => e.join(","))].join("\n");
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute(
+      "download",
+      `${shop.code || "SHOP"}_Item_Wise_Sales_${selectedOperatorFilter}_${period}_${new Date().toISOString().split("T")[0]}.csv`
+    );
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+
+    toast.create({
+      title: "Export complete",
+      description: `Downloaded ${filteredAndSortedItems.length} item sales records in CSV format.`,
       type: "success",
     });
   };
@@ -966,6 +1218,11 @@ export function SingleShopView({
               Overview & Analytics
             </TabsTrigger>
             {isCommunication && (
+              <TabsTrigger value="itemSales" className="text-xs">
+                Item-Wise Sales
+              </TabsTrigger>
+            )}
+            {isCommunication && (
               <TabsTrigger value="items" className="text-xs">
                 Items & Inventory ({commItems.length})
               </TabsTrigger>
@@ -1317,6 +1574,404 @@ export function SingleShopView({
             />
           </div>
         </TabsContent>
+
+        {/* ITEM-WISE SALES & TELECOM ANALYTICS TAB CONTENT */}
+        {isCommunication && (
+          <TabsContent value="itemSales" className="space-y-6 mt-0">
+            {/* Top Period & Controls Bar */}
+            <div className="flex flex-col gap-4 rounded-xl border border-border bg-card p-4 shadow-xs md:flex-row md:items-center md:justify-between">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <div className="p-1.5 rounded-md bg-primary/10 text-primary">
+                    <SmartphoneIcon className="size-4" />
+                  </div>
+                  <h3 className="text-sm font-bold text-foreground">
+                    Item-Wise Sales & Telecom Breakdown
+                  </h3>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Aggregated reload sales, base costs, and net profit margins categorized by telecom network and individual item codes.
+                </p>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="flex items-center rounded-full border border-border bg-muted/60 p-1">
+                  {(["today", "week", "month", "year", "custom"] as const).map((p) => (
+                    <Button
+                      key={p}
+                      variant={period === p ? "default" : "ghost"}
+                      size="xs"
+                      onClick={() => setPeriod(p)}
+                      className={`text-xs capitalize h-7 px-3 ${period === p ? "shadow-xs" : "text-muted-foreground"}`}
+                    >
+                      {p === "today" ? "Today" : p === "week" ? "This Week" : p === "month" ? "This Month" : p === "year" ? "This Year" : "Custom Range"}
+                    </Button>
+                  ))}
+                </div>
+
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={fetchShopData}
+                  disabled={loading}
+                  className="h-8 gap-1.5 text-xs"
+                >
+                  <RefreshCwIcon className={`size-3.5 ${loading ? "animate-spin" : ""}`} />
+                  <span className="hidden sm:inline">Refresh</span>
+                </Button>
+
+                <Button
+                  variant="default"
+                  size="sm"
+                  onClick={handleExportItemSalesCSV}
+                  className="h-8 gap-1.5 text-xs"
+                >
+                  <DownloadIcon className="size-3.5" />
+                  <span>Export CSV</span>
+                </Button>
+              </div>
+            </div>
+
+            {/* Custom Date Range Picker if Selected */}
+            {period === "custom" && (
+              <div className="flex flex-wrap items-center gap-3 rounded-xl border border-border bg-card/60 p-3 shadow-xs">
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <CalendarIcon className="size-3.5 text-primary" />
+                  <span>Custom Date Range:</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Input
+                    type="date"
+                    value={startDate}
+                    onChange={(e) => setStartDate(e.target.value)}
+                    className="h-8 text-xs w-36"
+                  />
+                  <span className="text-xs text-muted-foreground">to</span>
+                  <Input
+                    type="date"
+                    value={endDate}
+                    onChange={(e) => setEndDate(e.target.value)}
+                    className="h-8 text-xs w-36"
+                  />
+                  <Button
+                    size="xs"
+                    onClick={fetchShopData}
+                    disabled={loading}
+                    className="h-8 text-xs px-3"
+                  >
+                    Apply Filter
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            {/* Telecom Operator KPI Summary Cards */}
+            <div>
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <RadioIcon className="size-4 text-primary" />
+                  <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    Telecom Network Operators ({period.toUpperCase()})
+                  </h4>
+                </div>
+                {selectedOperatorFilter !== "ALL" && (
+                  <Button
+                    variant="ghost"
+                    size="xs"
+                    onClick={() => setSelectedOperatorFilter("ALL")}
+                    className="h-6 text-[11px] gap-1 text-primary hover:text-primary"
+                  >
+                    <XIcon className="size-3" />
+                    Reset Operator Filter
+                  </Button>
+                )}
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3.5">
+                {telecomData.map((op: any) => {
+                  const isSelected = selectedOperatorFilter === op.operator;
+                  const style = OPERATOR_STYLES[op.operator] || OPERATOR_STYLES.OTHER;
+                  return (
+                    <Card
+                      key={op.operator}
+                      onClick={() => {
+                        if (isSelected) {
+                          setSelectedOperatorFilter("ALL");
+                        } else {
+                          setSelectedOperatorFilter(op.operator);
+                        }
+                      }}
+                      className={`relative cursor-pointer overflow-hidden transition-all duration-200 bg-gradient-to-br ${style.color} p-4 shadow-xs hover:shadow-md ${isSelected ? style.activeRing : style.borderClass
+                        }`}
+                    >
+                      <div className="flex items-start justify-between gap-1">
+                        <div className="flex items-center gap-2">
+                          <div className={`size-7 rounded-lg flex items-center justify-center font-bold text-xs ${style.badgeBg}`}>
+                            {op.codePrefix}
+                          </div>
+                          <div>
+                            <h4 className="text-xs font-bold text-foreground tracking-tight">
+                              {op.name}
+                            </h4>
+                          </div>
+                        </div>
+
+                        {isSelected ? (
+                          <Badge className="text-[9px] h-5 px-1.5 bg-foreground text-background font-semibold">
+                            Active
+                          </Badge>
+                        ) : (
+                          <span className="text-[10px] text-muted-foreground opacity-60 hover:opacity-100 transition-opacity">
+                            Filter ↵
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="mt-3 space-y-1">
+                        <div className="text-lg font-bold font-mono text-foreground tracking-tight">
+                          LKR {Number(op.revenue || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                        </div>
+                        <div className="flex items-center justify-between text-[11px]">
+                          <span className="text-muted-foreground">Net Profit:</span>
+                          <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400">
+                            {op.profit >= 0 ? "+" : ""}LKR {Number(op.profit || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between text-[11px] pt-1 border-t border-border/50">
+                          <span className="text-muted-foreground">Cost:</span>
+                          <span className="font-mono text-muted-foreground">
+                            LKR {Number(op.cost || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between text-[11px] pt-0.5">
+                          <span className="text-muted-foreground">Margin:</span>
+                          <span className="font-mono font-semibold text-foreground">
+                            {op.marginPct}% ({op.quantity || 0} units)
+                          </span>
+                        </div>
+                      </div>
+                    </Card>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Item-Wise Breakdown Table Card */}
+            <Card className="border-border bg-card shadow-xs">
+              <CardHeader className="pb-3 border-b border-border">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <CardTitle className="text-base font-bold text-foreground flex items-center gap-2">
+                      <TagIcon className="size-4 text-primary" />
+                      Individual Product & Reload Performance
+                    </CardTitle>
+                    <CardDescription className="text-xs">
+                      Detailed sales volume, wholesale cost, net profit, and profit margins for every item sold in this period
+                    </CardDescription>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-muted-foreground">
+                      Showing <strong className="text-foreground">{filteredAndSortedItems.length}</strong> item{filteredAndSortedItems.length !== 1 ? "s" : ""}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Search & Filtering Controls */}
+                <div className="mt-3 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-3 border-t border-border/60">
+                  <div className="relative flex-1 max-w-sm">
+                    <SearchIcon className="absolute left-2.5 top-2.5 size-3.5 text-muted-foreground" />
+                    <Input
+                      placeholder="Search by item code or name..."
+                      value={itemSearchQuery}
+                      onChange={(e) => setItemSearchQuery(e.target.value)}
+                      className="pl-8 h-8 text-xs"
+                    />
+                    {itemSearchQuery && (
+                      <button
+                        onClick={() => setItemSearchQuery("")}
+                        className="absolute right-2.5 top-2.5 text-muted-foreground hover:text-foreground"
+                      >
+                        <XIcon className="size-3.5" />
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    {/* Operator quick pills */}
+                    <div className="flex items-center rounded-lg border border-border bg-muted/60 p-0.5">
+                      {(["ALL", "DIALOG", "MOBITEL", "AIRTEL", "HUTCH", "OTHER"] as const).map((opKey) => (
+                        <button
+                          key={opKey}
+                          onClick={() => setSelectedOperatorFilter(opKey)}
+                          className={`text-[11px] font-medium px-2 py-1 rounded-md transition-all ${selectedOperatorFilter === opKey
+                            ? "bg-background text-foreground shadow-xs font-bold"
+                            : "text-muted-foreground hover:text-foreground"
+                            }`}
+                        >
+                          {opKey === "ALL" ? "All" : opKey.charAt(0) + opKey.slice(1).toLowerCase()}
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Sort selector */}
+                    <Select
+                      value={itemSortBy}
+                      onValueChange={(val: any) => setItemSortBy(val)}
+                    >
+                      <SelectTrigger className="h-8 text-xs w-40">
+                        <SelectValue placeholder="Sort By" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="profit" className="text-xs">Highest Profit</SelectItem>
+                        <SelectItem value="revenue" className="text-xs">Highest Sales</SelectItem>
+                        <SelectItem value="quantity" className="text-xs">Most Units Sold</SelectItem>
+                        <SelectItem value="margin" className="text-xs">Highest Margin %</SelectItem>
+                        <SelectItem value="code" className="text-xs">Item Code (A-Z)</SelectItem>
+                      </SelectContent>
+                    </Select>
+
+                    <Button
+                      variant="outline"
+                      size="icon-xs"
+                      onClick={() => setItemSortOrder((prev) => (prev === "asc" ? "desc" : "asc"))}
+                      title={`Sort order: ${itemSortOrder === "asc" ? "Ascending" : "Descending"}`}
+                      className="h-8 w-8"
+                    >
+                      <ArrowUpDownIcon className="size-3.5" />
+                    </Button>
+                  </div>
+                </div>
+
+                {/* Filter info pill banner if operator is filtered */}
+                {selectedOperatorFilter !== "ALL" && (
+                  <div className="flex items-center justify-between mt-2 py-1.5 px-3 rounded-lg bg-primary/10 border border-primary/20 text-xs">
+                    <span className="text-primary font-medium flex items-center gap-1.5">
+                      <FilterIcon className="size-3.5" />
+                      Filtering table by <strong>{telecomData.find((t: any) => t.operator === selectedOperatorFilter)?.name || selectedOperatorFilter}</strong> ({selectedOperatorFilter.charAt(0)} prefix)
+                    </span>
+                    <button
+                      onClick={() => setSelectedOperatorFilter("ALL")}
+                      className="text-primary hover:underline font-bold text-[11px]"
+                    >
+                      Clear Filter (Show All)
+                    </button>
+                  </div>
+                )}
+              </CardHeader>
+
+              <CardContent className="p-0">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs text-left">
+                    <thead className="bg-muted/50 text-muted-foreground uppercase tracking-wider text-[11px] border-b border-border">
+                      <tr>
+                        <th className="py-3 px-4 font-semibold">Item Code</th>
+                        <th className="py-3 px-4 font-semibold">Product / Item Name</th>
+                        <th className="py-3 px-4 font-semibold">Network Operator</th>
+                        <th className="py-3 px-4 font-semibold text-right">Units Sold</th>
+                        <th className="py-3 px-4 font-semibold text-right">Base Cost</th>
+                        <th className="py-3 px-4 font-semibold text-right">Total Cost</th>
+                        <th className="py-3 px-4 font-semibold text-right">Total Sales</th>
+                        <th className="py-3 px-4 font-semibold text-right">Net Profit</th>
+                        <th className="py-3 px-4 font-semibold text-right">Margin %</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border">
+                      {filteredAndSortedItems.length === 0 ? (
+                        <tr>
+                          <td colSpan={9} className="py-12 text-center text-muted-foreground">
+                            <div className="flex flex-col items-center justify-center gap-2">
+                              <PackageIcon className="size-8 opacity-40 text-muted-foreground" />
+                              <p className="font-medium text-sm text-foreground">No item sales recorded</p>
+                              <p className="text-xs max-w-sm text-muted-foreground">
+                                No sales matching this time period or operator filter were found in the shop records.
+                              </p>
+                              {selectedOperatorFilter !== "ALL" && (
+                                <Button
+                                  variant="outline"
+                                  size="xs"
+                                  onClick={() => setSelectedOperatorFilter("ALL")}
+                                  className="mt-2 text-xs"
+                                >
+                                  Clear Operator Filter
+                                </Button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      ) : (
+                        filteredAndSortedItems.map((item) => (
+                          <tr key={item.itemCode} className="hover:bg-muted/40 transition-colors">
+                            <td className="py-3 px-4 font-mono font-bold text-foreground">
+                              <span className="bg-muted px-2 py-0.5 rounded-md border border-border">
+                                {item.itemCode}
+                              </span>
+                            </td>
+                            <td className="py-3 px-4 font-medium text-foreground">
+                              {item.itemName}
+                            </td>
+                            <td className="py-3 px-4">
+                              {renderOperatorBadge(item.operator)}
+                            </td>
+                            <td className="py-3 px-4 text-right font-mono font-semibold">
+                              {item.quantity.toLocaleString()}
+                            </td>
+                            <td className="py-3 px-4 text-right font-mono text-muted-foreground">
+                              LKR {Number(item.unitCost || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                            </td>
+                            <td className="py-3 px-4 text-right font-mono text-muted-foreground">
+                              LKR {Number(item.cost || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                            </td>
+                            <td className="py-3 px-4 text-right font-mono font-bold text-foreground">
+                              LKR {Number(item.revenue || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                            </td>
+                            <td className="py-3 px-4 text-right font-mono font-bold text-emerald-600 dark:text-emerald-400">
+                              {item.profit >= 0 ? "+" : ""}LKR {Number(item.profit || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                            </td>
+                            <td className="py-3 px-4 text-right font-mono">
+                              <span className="inline-block px-1.5 py-0.5 rounded-md text-[10px] font-semibold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+                                {item.marginPct}%
+                              </span>
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                    {filteredAndSortedItems.length > 0 && (
+                      <tfoot className="bg-muted/50 border-t-2 border-border font-semibold">
+                        <tr>
+                          <td colSpan={3} className="py-3.5 px-4 text-foreground uppercase tracking-wider text-[11px]">
+                            Filtered Totals ({filteredAndSortedItems.length} Products)
+                          </td>
+                          <td className="py-3.5 px-4 text-right font-mono text-foreground font-bold">
+                            {filteredTotals.qty.toLocaleString()} units
+                          </td>
+                          <td className="py-3.5 px-4 text-right text-muted-foreground font-mono">
+                            -
+                          </td>
+                          <td className="py-3.5 px-4 text-right font-mono text-muted-foreground">
+                            LKR {filteredTotals.cost.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                          </td>
+                          <td className="py-3.5 px-4 text-right font-mono text-foreground font-bold">
+                            LKR {filteredTotals.rev.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                          </td>
+                          <td className="py-3.5 px-4 text-right font-mono text-emerald-600 dark:text-emerald-400 font-bold">
+                            {filteredTotals.profit >= 0 ? "+" : ""}LKR {filteredTotals.profit.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                          </td>
+                          <td className="py-3.5 px-4 text-right font-mono">
+                            <span className="inline-block px-2 py-0.5 rounded-md text-[11px] font-bold bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30">
+                              {filteredTotals.margin}%
+                            </span>
+                          </td>
+                        </tr>
+                      </tfoot>
+                    )}
+                  </table>
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+        )}
 
         {/* ITEMS & INVENTORY TAB CONTENT */}
         {isCommunication && (

@@ -30,3 +30,15 @@ export const updateCommunicationItemSchema = z.object({
 });
 
 export type UpdateCommunicationItemInput = z.infer<typeof updateCommunicationItemSchema>;
+
+export type TelecomOperator = "DIALOG" | "AIRTEL" | "MOBITEL" | "HUTCH" | "OTHER";
+
+export function classifyTelecomOperator(code?: string): TelecomOperator {
+  if (!code) return "OTHER";
+  const firstChar = code.trim().toUpperCase().charAt(0);
+  if (firstChar === "D") return "DIALOG";
+  if (firstChar === "A") return "AIRTEL";
+  if (firstChar === "M") return "MOBITEL";
+  if (firstChar === "H") return "HUTCH";
+  return "OTHER";
+}
