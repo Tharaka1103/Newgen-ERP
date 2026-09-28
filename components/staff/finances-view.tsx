@@ -188,6 +188,11 @@ export function FinancesView({
     name: string;
     phone: string;
     currentBalance: number;
+    shop?: {
+      _id: string;
+      name: string;
+      code: string;
+    } | null;
   } | null>(null);
   const [repayAmount, setRepayAmount] = React.useState<number>(0);
   const [repayMethod, setRepayMethod] = React.useState<"CASH" | "BANK_TRANSFER" | "ONLINE">("CASH");
@@ -247,6 +252,7 @@ export function FinancesView({
 
     setSubmittingRepay(true);
     try {
+      const isCross = Boolean(repayCustomer.shop && repayCustomer.shop._id !== userShopId);
       const res = await repayCustomerDebtAction({
         shopId: userShopId,
         customerCreditId: repayCustomer._id,
@@ -254,6 +260,9 @@ export function FinancesView({
         paymentMethod: repayMethod,
         bankAccountId: repayBankId,
         note: repayNote,
+        isCrossBranchPayment: isCross,
+        collectingShop: userShopId,
+        beneficiaryShop: repayCustomer.shop?._id || null,
       });
 
       if (res.success) {
@@ -909,10 +918,21 @@ export function FinancesView({
             <p className="text-xs text-muted-foreground truncate" title={r.reason}>
               {r.reason}
             </p>
-            {r.isRelatedToBranch && r.relatedBranch && (
-              <span className="inline-flex text-[9px] font-medium text-amber-600 dark:text-amber-400 bg-amber-500/10 px-1 rounded">
-                Branch Ref: {r.relatedBranch.name}
-              </span>
+            {(r.isCrossBranchPayment || (r.isRelatedToBranch && r.relatedBranch)) && (
+              <div className="flex items-center gap-1 flex-wrap pt-0.5">
+                <span className="inline-flex text-[9px] font-medium text-blue-700 dark:text-blue-300 bg-blue-500/10 px-1.5 py-0.5 rounded border border-blue-500/20">
+                  Cross-Branch: For {r.beneficiaryShop?.name || r.relatedBranch?.name}
+                </span>
+                {r.interBranchSettlementStatus && (
+                  <span className={`inline-flex text-[8px] font-mono px-1 py-0.5 rounded border ${
+                    r.interBranchSettlementStatus === "SETTLED"
+                      ? "text-emerald-700 dark:text-emerald-300 bg-emerald-500/10 border-emerald-500/20"
+                      : "text-amber-700 dark:text-amber-300 bg-amber-500/10 border-amber-500/20"
+                  }`}>
+                    {r.interBranchSettlementStatus === "SETTLED" ? "Settled" : "Unsettled"}
+                  </span>
+                )}
+              </div>
             )}
           </div>
         );
@@ -1740,6 +1760,48 @@ export function FinancesView({
                   )}
                 </div>
 
+                {/* Cross-Branch Payment Option */}
+                <div className="p-3 rounded-lg border border-border bg-muted/20 space-y-2">
+                  <label className="text-xs font-semibold text-foreground flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      {...createForm.register("isCrossBranchPayment")}
+                      className="rounded border-input text-primary focus:ring-primary size-4"
+                    />
+                    <span>Cross-Branch Payment (Received for Another Branch)</span>
+                  </label>
+                  <p className="text-[11px] text-muted-foreground">
+                    Check this if a customer is paying here for a bill / service / debt of another branch.
+                  </p>
+
+                  {createForm.watch("isCrossBranchPayment") && (
+                    <div className="pt-2 border-t border-border space-y-2">
+                      <div className="space-y-1">
+                        <label className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                          <BuildingIcon className="size-3 text-primary" />
+                          Beneficiary Branch (Whose income is this?)
+                        </label>
+                        <select
+                          {...createForm.register("beneficiaryShop")}
+                          className="w-full h-9 rounded-md border border-border bg-card text-foreground px-3 text-xs font-medium outline-none focus:border-ring [color-scheme:light] dark:[color-scheme:dark]"
+                        >
+                          <option value="">Select Target Branch...</option>
+                          {activeShops
+                            .filter((s) => s._id !== userShopId)
+                            .map((s) => (
+                              <option key={s._id} value={s._id}>
+                                {s.name} ({s.code})
+                              </option>
+                            ))}
+                        </select>
+                      </div>
+                      <p className="text-[11px] text-blue-600 dark:text-blue-400 bg-blue-500/10 p-2 rounded border border-blue-500/20">
+                        💡 <strong>Drawer Accounting:</strong> Physical cash will be added to your drawer ({userShopName || "this shop"}), and sales revenue will be attributed to the selected branch after verification.
+                      </p>
+                    </div>
+                  )}
+                </div>
+
                 <DialogFooter className="pt-2">
                   <Button type="button" variant="outline" size="sm" onClick={() => setCreateOpen(false)}>
                     Cancel
@@ -2080,6 +2142,16 @@ export function FinancesView({
                     </span>
                   </div>
                 </div>
+
+                {repayCustomer.shop && repayCustomer.shop._id !== userShopId && (
+                  <div className="flex items-start gap-2 p-2.5 rounded-lg bg-blue-500/15 border border-blue-500/30 text-blue-800 dark:text-blue-300 text-[11px] font-medium">
+                    <BuildingIcon className="size-3.5 text-blue-600 dark:text-blue-400 shrink-0 mt-0.5" />
+                    <div>
+                      <span className="font-bold">Cross-Branch Customer:</span> Belongs to{" "}
+                      <strong>{repayCustomer.shop.name} ({repayCustomer.shop.code})</strong>. Cash will be collected into your drawer ({userShopName || "this shop"}), and debt will be settled for {repayCustomer.shop.name} (submitted for approval).
+                    </div>
+                  </div>
+                )}
 
                 <div className="flex justify-end pt-1">
                   <Button

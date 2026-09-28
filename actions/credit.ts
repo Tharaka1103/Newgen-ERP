@@ -32,17 +32,30 @@ export async function searchCreditCustomerAction(phone: string, shopId?: string 
     await connectDB();
     const cleanPhone = phone.trim();
 
-    const query: Record<string, unknown> = {
-      phone: { $regex: cleanPhone, $options: "i" },
-    };
+    let customer = null;
     if (shopId) {
-      query.shop = new mongoose.Types.ObjectId(shopId);
+      customer = await CustomerCredit.findOne({
+        phone: { $regex: cleanPhone, $options: "i" },
+        shop: new mongoose.Types.ObjectId(shopId),
+      })
+        .populate("shop", "name code shopType")
+        .lean();
     }
 
-    const customer = await CustomerCredit.findOne(query).lean();
+    // If not found in current shop, look across all branches
+    if (!customer) {
+      customer = await CustomerCredit.findOne({
+        phone: { $regex: cleanPhone, $options: "i" },
+      })
+        .populate("shop", "name code shopType")
+        .lean();
+    }
+
     if (!customer) {
       return { success: true, customer: null };
     }
+
+    const customerShopDoc = customer.shop as any;
 
     const result = {
       success: true,
@@ -50,6 +63,14 @@ export async function searchCreditCustomerAction(phone: string, shopId?: string 
         _id: customer._id.toString(),
         name: customer.name,
         phone: customer.phone,
+        shop: customerShopDoc
+          ? {
+              _id: customerShopDoc._id.toString(),
+              name: customerShopDoc.name,
+              code: customerShopDoc.code,
+              shopType: customerShopDoc.shopType,
+            }
+          : null,
         totalCredit: customer.totalCredit,
         totalPaid: customer.totalPaid,
         currentBalance: customer.currentBalance,
@@ -66,6 +87,7 @@ export async function searchCreditCustomerAction(phone: string, shopId?: string 
 
 /**
  * Records a debt repayment from a customer.
+ * Supports cross-branch payments (Customer of Shop B paying at Shop A).
  * Deducts the amount from customer debt, records an income finance entry,
  * and updates shop cash balance or bank account.
  */
@@ -95,7 +117,7 @@ export async function repayCustomerDebtAction(payload: RepayCustomerDebtInput) {
       return { success: false, error: "Invalid or inactive branch." };
     }
 
-    const customer = await CustomerCredit.findById(customerCreditId);
+    const customer = await CustomerCredit.findById(customerCreditId).populate("shop", "name code");
     if (!customer) {
       return { success: false, error: "Customer credit account not found." };
     }
@@ -110,6 +132,11 @@ export async function repayCustomerDebtAction(payload: RepayCustomerDebtInput) {
         error: `Repayment amount (LKR ${amount.toLocaleString()}) cannot exceed outstanding debt (LKR ${customer.currentBalance.toLocaleString()}).`,
       };
     }
+
+    // Determine if this is a cross-branch payment
+    const customerShopId = customer.shop ? (customer.shop as any)._id?.toString() || customer.shop.toString() : null;
+    const currentShopId = shop._id.toString();
+    const isCrossBranch = (customerShopId && customerShopId !== currentShopId) || Boolean(parsed.data.isCrossBranchPayment);
 
     // Find or create "Customer Debt Repayment" category
     let category = await Category.findOne({
@@ -146,6 +173,11 @@ export async function repayCustomerDebtAction(payload: RepayCustomerDebtInput) {
     const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, "");
     const billNumber = `REC-${shop.code}-${dateStr}-${String(count + 1).padStart(3, "0")}`;
 
+    // Cross-branch transactions require Verifier approval before taking effect on physical cash drawers
+    const recordStatus = isCrossBranch ? "PENDING" : "APPROVED";
+    const approvedAmount = isCrossBranch ? null : amount;
+    const isLocked = !isCrossBranch;
+
     // Create Finance Record for the repayment
     const record = await FinanceRecord.create({
       shop: shop._id,
@@ -156,19 +188,28 @@ export async function repayCustomerDebtAction(payload: RepayCustomerDebtInput) {
       type: "INCOME",
       paymentMethod,
       bankAccount: paymentMethod === "BANK_TRANSFER" && bankAccountId ? new mongoose.Types.ObjectId(bankAccountId) : null,
-      reason: `Debt Repayment from ${customer.name} (${customer.phone})${note ? ` - ${note.trim()}` : ""}`,
-      status: "APPROVED",
-      approvedAmount: amount,
-      isLocked: true,
+      reason: isCrossBranch
+        ? `Cross-Branch Debt Repayment from ${customer.name} (${customer.phone}) [Customer of ${(customer.shop as any)?.name || "Another Branch"}]${note ? ` - ${note.trim()}` : ""}`
+        : `Debt Repayment from ${customer.name} (${customer.phone})${note ? ` - ${note.trim()}` : ""}`,
+      status: recordStatus,
+      approvedAmount,
+      isLocked,
       runningBalance: 0,
       customerCredit: customer._id,
       customerName: customer.name,
       customerPhone: customer.phone,
       isDebtRepayment: true,
+
+      // Cross-Branch Payment & Inter-Branch Settlement Fields
+      isCrossBranchPayment: isCrossBranch,
+      collectingShop: isCrossBranch ? shop._id : null,
+      beneficiaryShop: isCrossBranch ? (customer.shop as any)?._id || customer.shop : null,
+      interBranchSettlementStatus: isCrossBranch ? "UNSETTLED" : undefined,
+
       createdBy: new mongoose.Types.ObjectId(session.user.id),
-      reviewedBy: new mongoose.Types.ObjectId(session.user.id),
-      reviewedAt: new Date(),
-      reviewRemarks: "Auto-approved customer debt repayment",
+      reviewedBy: isCrossBranch ? null : new mongoose.Types.ObjectId(session.user.id),
+      reviewedAt: isCrossBranch ? null : new Date(),
+      reviewRemarks: isCrossBranch ? null : "Auto-approved customer debt repayment",
     });
 
     // Update Customer Credit Account
@@ -187,19 +228,21 @@ export async function repayCustomerDebtAction(payload: RepayCustomerDebtInput) {
       bankAccount: paymentMethod === "BANK_TRANSFER" && bankAccountId ? new mongoose.Types.ObjectId(bankAccountId) : null,
       financeRecord: record._id,
       billNumber,
-      note: note ? note.trim() : "Debt repayment",
+      note: note ? note.trim() : (isCrossBranch ? `Cross-branch debt repayment at ${shop.name}` : "Debt repayment"),
       recordedBy: new mongoose.Types.ObjectId(session.user.id),
       date: new Date(),
     });
 
-    // Update balances
-    if (paymentMethod === "CASH") {
-      await recalculateShopRunningBalance(shop._id, new Date());
-    } else if (paymentMethod === "BANK_TRANSFER" && bankAccountId) {
-      const bank = await BankAccount.findById(bankAccountId);
-      if (bank) {
-        bank.currentBalance += amount;
-        await bank.save();
+    // Update balances if auto-approved
+    if (recordStatus === "APPROVED") {
+      if (paymentMethod === "CASH") {
+        await recalculateShopRunningBalance(shop._id, new Date());
+      } else if (paymentMethod === "BANK_TRANSFER" && bankAccountId) {
+        const bank = await BankAccount.findById(bankAccountId);
+        if (bank) {
+          bank.currentBalance += amount;
+          await bank.save();
+        }
       }
     }
 
@@ -210,23 +253,33 @@ export async function repayCustomerDebtAction(payload: RepayCustomerDebtInput) {
       targetId: customer._id,
       metadata: {
         shopId: shop._id.toString(),
+        isCrossBranch,
+        collectingShop: shop.name,
+        beneficiaryShop: (customer.shop as any)?.name,
         customerName: customer.name,
         customerPhone: customer.phone,
         repaymentAmount: amount,
         remainingDebt: customer.currentBalance,
         billNumber,
         paymentMethod,
+        status: recordStatus,
       },
     });
 
     revalidatePath("/dashboard/staff/finances");
     revalidatePath(`/dashboard/admin/shops/${shopId}`);
+    if (customerShopId) {
+      revalidatePath(`/dashboard/admin/shops/${customerShopId}`);
+    }
     revalidatePath("/dashboard/admin/shops");
 
     return {
       success: true,
-      message: `LKR ${amount.toLocaleString(undefined, { minimumFractionDigits: 2 })} received from ${customer.name}. Remaining balance: LKR ${customer.currentBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}`,
+      message: isCrossBranch
+        ? `LKR ${amount.toLocaleString(undefined, { minimumFractionDigits: 2 })} collected from ${customer.name} for ${(customer.shop as any)?.name || "target branch"}. Submitted for verification.`
+        : `LKR ${amount.toLocaleString(undefined, { minimumFractionDigits: 2 })} received from ${customer.name}. Remaining balance: LKR ${customer.currentBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}`,
       currentBalance: customer.currentBalance,
+      isCrossBranch,
     };
   } catch (error) {
     console.error("Repay customer debt error:", error);

@@ -471,10 +471,21 @@ export function AllTransactionsView({
             <p className="text-xs text-muted-foreground truncate" title={r.reason}>
               {r.reason}
             </p>
-            {r.isRelatedToBranch && r.relatedBranch && (
-              <span className="inline-flex text-[9px] font-medium text-amber-600 dark:text-amber-400 bg-amber-500/10 px-1 rounded">
-                Ref: {r.relatedBranch.name}
-              </span>
+            {(r.isCrossBranchPayment || (r.isRelatedToBranch && r.relatedBranch)) && (
+              <div className="flex items-center gap-1 flex-wrap pt-0.5">
+                <span className="inline-flex text-[9px] font-medium text-blue-700 dark:text-blue-300 bg-blue-500/10 px-1.5 py-0.5 rounded border border-blue-500/20">
+                  Cross-Branch: For {r.beneficiaryShop?.name || r.relatedBranch?.name}
+                </span>
+                {r.interBranchSettlementStatus && (
+                  <span className={`inline-flex text-[8px] font-mono px-1 py-0.5 rounded border ${
+                    r.interBranchSettlementStatus === "SETTLED"
+                      ? "text-emerald-700 dark:text-emerald-300 bg-emerald-500/10 border-emerald-500/20"
+                      : "text-amber-700 dark:text-amber-300 bg-amber-500/10 border-amber-500/20"
+                  }`}>
+                    {r.interBranchSettlementStatus === "SETTLED" ? "Settled" : "Unsettled"}
+                  </span>
+                )}
+              </div>
             )}
           </div>
         );

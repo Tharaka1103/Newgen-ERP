@@ -15,6 +15,8 @@ import {
   getShopCreditCustomersAction,
   getCustomerCreditStatementAction,
 } from "@/actions/credit";
+import { settleInterBranchCashAction } from "@/actions/finances";
+import { getActiveBankAccountsAction } from "@/actions/bankAccounts";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
@@ -85,6 +87,7 @@ import {
   CalendarIcon,
   TagIcon,
   XIcon,
+  LandmarkIcon,
 } from "lucide-react";
 import { toast } from "@/components/ui/toast";
 import { useForm } from "react-hook-form";
@@ -124,6 +127,26 @@ interface SingleShopViewProps {
     currentBalance: number;
     totalCustomerCredit?: number;
     creditCustomerCount?: number;
+    interBranchDues?: {
+      holdingForOthers: Array<{
+        shopId: string;
+        shopName: string;
+        shopCode: string;
+        totalAmount: number;
+        count: number;
+        recordIds: string[];
+      }>;
+      owedFromOthers: Array<{
+        shopId: string;
+        shopName: string;
+        shopCode: string;
+        totalAmount: number;
+        count: number;
+        recordIds: string[];
+      }>;
+      totalHolding: number;
+      totalOwed: number;
+    };
   };
 }
 
@@ -232,6 +255,91 @@ export function SingleShopView({
       isActive: true,
     },
   });
+
+  // Inter-Branch Cash Settlement State
+  const [settleOpen, setSettleOpen] = React.useState(false);
+  const [selectedHoldingDue, setSelectedHoldingDue] = React.useState<any | null>(null);
+  const [settlementType, setSettlementType] = React.useState<
+    "HANDOVER_TO_BRANCH" | "DEPOSITED_TO_BANK" | "DIRECT_OFFSET"
+  >("HANDOVER_TO_BRANCH");
+  const [settlementBankId, setSettlementBankId] = React.useState<string | null>(null);
+  const [settlementRef, setSettlementRef] = React.useState("");
+  const [settlementNote, setSettlementNote] = React.useState("");
+  const [submittingSettlement, setSubmittingSettlement] = React.useState(false);
+  const [bankAccounts, setBankAccounts] = React.useState<any[]>([]);
+
+  const handleOpenSettle = async (due: any) => {
+    setSelectedHoldingDue(due);
+    setSettlementType("HANDOVER_TO_BRANCH");
+    setSettlementBankId(null);
+    setSettlementRef("");
+    setSettlementNote("");
+    setSettleOpen(true);
+
+    if (bankAccounts.length === 0) {
+      try {
+        const res = await getActiveBankAccountsAction();
+        if (res.success && res.accounts) {
+          setBankAccounts(res.accounts);
+          if (res.accounts.length > 0) setSettlementBankId(res.accounts[0]._id);
+        }
+      } catch (err) {
+        console.error("Failed to load bank accounts for settlement:", err);
+      }
+    }
+  };
+
+  const handleSettleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedHoldingDue) return;
+
+    if (settlementType === "DEPOSITED_TO_BANK" && !settlementBankId) {
+      toast.create({
+        title: "Bank Account Required",
+        description: "Please select a bank account to deposit the collected cash.",
+        type: "error",
+      });
+      return;
+    }
+
+    setSubmittingSettlement(true);
+    try {
+      const res = await settleInterBranchCashAction({
+        recordIds: selectedHoldingDue.recordIds,
+        holdingShopId: shop._id,
+        targetShopId: selectedHoldingDue.shopId,
+        settlementType,
+        bankAccountId: settlementType === "DEPOSITED_TO_BANK" ? settlementBankId : null,
+        reference: settlementRef,
+        note: settlementNote,
+      });
+
+      if (res.success) {
+        toast.create({
+          title: "Inter-Branch Cash Settled",
+          description: res.message || "Settlement completed successfully.",
+          type: "success",
+        });
+        setSettleOpen(false);
+        setSelectedHoldingDue(null);
+        fetchShopData();
+      } else {
+        toast.create({
+          title: "Settlement Failed",
+          description: res.error || "Failed to settle inter-branch cash.",
+          type: "error",
+        });
+      }
+    } catch {
+      toast.create({
+        title: "Error",
+        description: "Failed to connect to server.",
+        type: "error",
+      });
+    } finally {
+      setSubmittingSettlement(false);
+    }
+  };
 
   // Standard Analytics State
   const [analytics, setAnalytics] = React.useState<{
@@ -884,16 +992,34 @@ export function SingleShopView({
     },
     {
       accessorKey: "isRelatedToBranch",
-      header: "Branch Link",
-      cell: ({ row }) => (
-        row.original.isRelatedToBranch ? (
-          <Badge variant="outline" className="text-[10px] border-primary/40 bg-primary/10 text-primary">
-            {row.original.relatedBranch?.name || "Branch Linked"}
-          </Badge>
-        ) : (
-          <span className="text-[11px] text-muted-foreground">Direct Retail</span>
-        )
-      ),
+      header: "Branch / Cross-Payment",
+      cell: ({ row }) => {
+        const r = row.original;
+        if (r.isCrossBranchPayment) {
+          return (
+            <div className="flex flex-col gap-0.5">
+              <Badge variant="outline" className="text-[10px] border-blue-500/40 bg-blue-500/10 text-blue-700 dark:text-blue-400 font-semibold">
+                For: {r.beneficiaryShop?.name || r.relatedBranch?.name || "Other Branch"}
+              </Badge>
+              <span className={`text-[9px] font-mono px-1 py-0 rounded border w-fit ${
+                r.interBranchSettlementStatus === "SETTLED"
+                  ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
+                  : "bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/20"
+              }`}>
+                {r.interBranchSettlementStatus === "SETTLED" ? "Settled" : "Unsettled"}
+              </span>
+            </div>
+          );
+        }
+        if (r.isRelatedToBranch) {
+          return (
+            <Badge variant="outline" className="text-[10px] border-primary/40 bg-primary/10 text-primary">
+              {r.relatedBranch?.name || "Branch Linked"}
+            </Badge>
+          );
+        }
+        return <span className="text-[11px] text-muted-foreground">Direct Retail</span>;
+      },
     },
     {
       accessorKey: "status",
@@ -1332,6 +1458,114 @@ export function SingleShopView({
               </Card>
             )}
           </div>
+
+          {/* Inter-Branch Cash Dues & Settlement Section */}
+          {stats.interBranchDues && (stats.interBranchDues.totalHolding > 0 || stats.interBranchDues.totalOwed > 0) && (
+            <div className="grid gap-4 grid-cols-1 md:grid-cols-2">
+              {/* Cash Holding For Other Branches */}
+              <Card className="border-blue-500/30 bg-gradient-to-br from-card via-blue-500/5 to-card p-4 shadow-sm">
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <div className="p-2 rounded-lg bg-blue-500/15 text-blue-600 dark:text-blue-400">
+                        <Building2Icon className="size-5" />
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-bold text-foreground uppercase tracking-wider">
+                          Cash Holding For Other Branches
+                        </h4>
+                        <p className="text-[11px] text-muted-foreground">
+                          Cash physically in this shop drawer belonging to other branches
+                        </p>
+                      </div>
+                    </div>
+                    <Badge variant="outline" className="border-blue-500/30 text-blue-700 dark:text-blue-400 bg-blue-500/10 text-[10px] font-mono font-bold">
+                      {stats.interBranchDues.holdingForOthers.length} Branch{stats.interBranchDues.holdingForOthers.length !== 1 ? "es" : ""}
+                    </Badge>
+                  </div>
+
+                  <div className="text-2xl font-bold font-mono text-blue-600 dark:text-blue-400">
+                    LKR {Number(stats.interBranchDues.totalHolding || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  </div>
+
+                  <div className="space-y-2 pt-1 border-t border-border/60">
+                    {stats.interBranchDues.holdingForOthers.map((due) => (
+                      <div
+                        key={due.shopId}
+                        className="flex items-center justify-between p-2.5 rounded-lg bg-background/80 border border-border text-xs"
+                      >
+                        <div className="space-y-0.5">
+                          <span className="font-semibold text-foreground">
+                            {due.shopName} ({due.shopCode})
+                          </span>
+                          <p className="text-[11px] text-muted-foreground font-mono">
+                            {due.count} payment{due.count !== 1 ? "s" : ""} · LKR {Number(due.totalAmount).toLocaleString()}
+                          </p>
+                        </div>
+                        <Button
+                          size="xs"
+                          onClick={() => handleOpenSettle(due)}
+                          className="bg-blue-600 hover:bg-blue-700 text-white font-medium text-xs h-7 px-2.5 gap-1.5 shadow-sm"
+                        >
+                          <CheckCircle2Icon className="size-3.5" />
+                          Settle Cash
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </Card>
+
+              {/* Cash Owed From Other Branches */}
+              <Card className="border-purple-500/30 bg-gradient-to-br from-card via-purple-500/5 to-card p-4 shadow-sm">
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <div className="p-2 rounded-lg bg-purple-500/15 text-purple-600 dark:text-purple-400">
+                        <HandCoinsIcon className="size-5" />
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-bold text-foreground uppercase tracking-wider">
+                          Cash Owed From Other Branches
+                        </h4>
+                        <p className="text-[11px] text-muted-foreground">
+                          Cash other shops collected for this shop (awaiting handover)
+                        </p>
+                      </div>
+                    </div>
+                    <Badge variant="outline" className="border-purple-500/30 text-purple-700 dark:text-purple-400 bg-purple-500/10 text-[10px] font-mono font-bold">
+                      {stats.interBranchDues.owedFromOthers.length} Branch{stats.interBranchDues.owedFromOthers.length !== 1 ? "es" : ""}
+                    </Badge>
+                  </div>
+
+                  <div className="text-2xl font-bold font-mono text-purple-600 dark:text-purple-400">
+                    LKR {Number(stats.interBranchDues.totalOwed || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  </div>
+
+                  <div className="space-y-2 pt-1 border-t border-border/60">
+                    {stats.interBranchDues.owedFromOthers.map((due) => (
+                      <div
+                        key={due.shopId}
+                        className="flex items-center justify-between p-2.5 rounded-lg bg-background/80 border border-border text-xs"
+                      >
+                        <div className="space-y-0.5">
+                          <span className="font-semibold text-foreground">
+                            Collected by {due.shopName} ({due.shopCode})
+                          </span>
+                          <p className="text-[11px] text-muted-foreground font-mono">
+                            {due.count} payment{due.count !== 1 ? "s" : ""} awaiting settlement
+                          </p>
+                        </div>
+                        <span className="font-mono font-bold text-purple-700 dark:text-purple-400">
+                          LKR {Number(due.totalAmount).toLocaleString()}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </Card>
+            </div>
+          )}
 
           {/* Filter & Period Selector Bar */}
           <div className="flex flex-col gap-4 rounded-xl border border-border bg-card p-4 shadow-sm md:flex-row md:items-center md:justify-between">
@@ -2471,6 +2705,168 @@ export function SingleShopView({
               Close Statement
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Inter-Branch Cash Settlement Modal */}
+      <Dialog open={settleOpen} onOpenChange={setSettleOpen}>
+        <DialogContent className="sm:max-w-[480px]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-foreground">
+              <Building2Icon className="size-5 text-blue-600" />
+              Settle Inter-Branch Cash
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+              Record physical cash handover or bank deposit for cross-branch payments collected at {shop.name}.
+            </DialogDescription>
+          </DialogHeader>
+
+          {selectedHoldingDue && (
+            <form onSubmit={handleSettleSubmit} className="space-y-4 py-2">
+              <div className="p-3 rounded-xl border border-blue-500/30 bg-blue-500/10 space-y-2">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-muted-foreground uppercase font-semibold text-[10px]">Beneficiary Branch:</span>
+                  <span className="font-bold text-foreground">
+                    {selectedHoldingDue.shopName} ({selectedHoldingDue.shopCode})
+                  </span>
+                </div>
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-muted-foreground uppercase font-semibold text-[10px]">Total Cash to Settle:</span>
+                  <span className="text-base font-bold font-mono text-blue-700 dark:text-blue-400">
+                    LKR {Number(selectedHoldingDue.totalAmount).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-muted-foreground uppercase font-semibold text-[10px]">Transactions Included:</span>
+                  <span className="font-mono text-muted-foreground font-medium">
+                    {selectedHoldingDue.count} record(s)
+                  </span>
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold uppercase text-muted-foreground">
+                  Settlement Method *
+                </label>
+                <div className="grid grid-cols-3 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setSettlementType("HANDOVER_TO_BRANCH")}
+                    className={`p-2 rounded-lg text-xs font-semibold border flex flex-col items-center justify-center text-center gap-1 transition-all ${
+                      settlementType === "HANDOVER_TO_BRANCH"
+                        ? "bg-blue-600 text-white border-blue-600 shadow-sm"
+                        : "border-border text-muted-foreground hover:bg-muted"
+                    }`}
+                  >
+                    <HandCoinsIcon className="size-4" />
+                    <span>Physical Handover</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSettlementType("DEPOSITED_TO_BANK")}
+                    className={`p-2 rounded-lg text-xs font-semibold border flex flex-col items-center justify-center text-center gap-1 transition-all ${
+                      settlementType === "DEPOSITED_TO_BANK"
+                        ? "bg-blue-600 text-white border-blue-600 shadow-sm"
+                        : "border-border text-muted-foreground hover:bg-muted"
+                    }`}
+                  >
+                    <LandmarkIcon className="size-4" />
+                    <span>Bank Deposit</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSettlementType("DIRECT_OFFSET")}
+                    className={`p-2 rounded-lg text-xs font-semibold border flex flex-col items-center justify-center text-center gap-1 transition-all ${
+                      settlementType === "DIRECT_OFFSET"
+                        ? "bg-blue-600 text-white border-blue-600 shadow-sm"
+                        : "border-border text-muted-foreground hover:bg-muted"
+                    }`}
+                  >
+                    <ArrowUpDownIcon className="size-4" />
+                    <span>Direct Offset</span>
+                  </button>
+                </div>
+                <p className="text-[11px] text-muted-foreground mt-1">
+                  {settlementType === "HANDOVER_TO_BRANCH" && "Physical cash is transferred from this shop drawer directly to the target branch drawer."}
+                  {settlementType === "DEPOSITED_TO_BANK" && "Physical cash from this drawer is deposited directly into a company bank account."}
+                  {settlementType === "DIRECT_OFFSET" && "Offsets mutual debt balances between the two branches without moving cash."}
+                </p>
+              </div>
+
+              {settlementType === "DEPOSITED_TO_BANK" && (
+                <div className="space-y-1.5 p-3 rounded-lg border border-border bg-muted/20">
+                  <label className="text-xs font-semibold uppercase text-muted-foreground flex items-center gap-1">
+                    <LandmarkIcon className="size-3.5 text-primary" />
+                    Select Company Bank Account *
+                  </label>
+                  <select
+                    value={settlementBankId || ""}
+                    onChange={(e) => setSettlementBankId(e.target.value || null)}
+                    className="w-full h-9 rounded-md border border-border bg-card text-foreground px-3 text-xs font-medium outline-none focus:border-ring"
+                  >
+                    <option value="">Choose Bank Account...</option>
+                    {bankAccounts.map((b) => (
+                      <option key={b._id} value={b._id}>
+                        {b.bankName} - {b.accountName} ({b.accountNumber})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold uppercase text-muted-foreground">
+                    Reference / Slip No.
+                  </label>
+                  <Input
+                    placeholder="e.g. SLIP-10293 or Handover ID"
+                    value={settlementRef}
+                    onChange={(e) => setSettlementRef(e.target.value)}
+                    className="h-9 text-xs font-mono"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold uppercase text-muted-foreground">
+                    Settlement Date
+                  </label>
+                  <Input
+                    value={new Date().toLocaleDateString()}
+                    disabled
+                    className="h-9 text-xs bg-muted/50 font-mono"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold uppercase text-muted-foreground">
+                  Settlement Notes / Handed Over By
+                </label>
+                <Textarea
+                  placeholder="e.g. Physical cash handed over to branch manager / deposit slip verified..."
+                  value={settlementNote}
+                  onChange={(e) => setSettlementNote(e.target.value)}
+                  className="text-xs"
+                  rows={2}
+                />
+              </div>
+
+              <DialogFooter className="pt-2">
+                <Button type="button" variant="outline" size="sm" onClick={() => setSettleOpen(false)}>
+                  Cancel
+                </Button>
+                <Button
+                  type="submit"
+                  size="sm"
+                  disabled={submittingSettlement}
+                  className="bg-blue-600 hover:bg-blue-700 text-white gap-1.5 font-semibold"
+                >
+                  {submittingSettlement ? <Loader2Icon className="size-3.5 animate-spin mr-1" /> : <CheckCircle2Icon className="size-3.5" />}
+                  Confirm Settlement
+                </Button>
+              </DialogFooter>
+            </form>
+          )}
         </DialogContent>
       </Dialog>
     </div>

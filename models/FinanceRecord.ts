@@ -38,6 +38,17 @@ export interface IFinanceRecord extends Document {
   relatedBranch?: mongoose.Types.ObjectId | null;
   relatedBranchNote?: string;
 
+  // Cross-Branch Payment & Inter-Branch Settlement Fields
+  isCrossBranchPayment?: boolean;
+  collectingShop?: mongoose.Types.ObjectId | null;
+  beneficiaryShop?: mongoose.Types.ObjectId | null;
+  interBranchSettlementStatus?: "UNSETTLED" | "SETTLED";
+  settledAt?: Date | null;
+  settledBy?: mongoose.Types.ObjectId | null;
+  settlementType?: "HANDOVER_TO_BRANCH" | "DEPOSITED_TO_BANK" | "DIRECT_OFFSET" | null;
+  settlementReference?: string;
+  settlementNote?: string;
+
   // Soft Deletion & Audit Fields
   isDeleted: boolean;
   deletedAt?: Date | null;
@@ -207,6 +218,53 @@ const FinanceRecordSchema = new Schema<IFinanceRecord>(
       default: null,
     },
     relatedBranchNote: {
+      type: String,
+      default: "",
+    },
+
+    // Cross-Branch Payment & Inter-Branch Settlement Fields
+    isCrossBranchPayment: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+    collectingShop: {
+      type: Schema.Types.ObjectId,
+      ref: "Shop",
+      default: null,
+      index: true,
+    },
+    beneficiaryShop: {
+      type: Schema.Types.ObjectId,
+      ref: "Shop",
+      default: null,
+      index: true,
+    },
+    interBranchSettlementStatus: {
+      type: String,
+      enum: ["UNSETTLED", "SETTLED"],
+      default: "UNSETTLED",
+      index: true,
+    },
+    settledAt: {
+      type: Date,
+      default: null,
+    },
+    settledBy: {
+      type: Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
+    settlementType: {
+      type: String,
+      enum: ["HANDOVER_TO_BRANCH", "DEPOSITED_TO_BANK", "DIRECT_OFFSET"],
+      default: null,
+    },
+    settlementReference: {
+      type: String,
+      default: "",
+    },
+    settlementNote: {
       type: String,
       default: "",
     },

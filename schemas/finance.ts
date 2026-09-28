@@ -46,6 +46,9 @@ export const createFinanceRecordSchema = z.object({
   isRelatedToBranch: z.boolean().optional(),
   relatedBranch: z.string().optional().nullable(),
   relatedBranchNote: z.string().optional(),
+  isCrossBranchPayment: z.boolean().optional(),
+  collectingShop: z.string().optional().nullable(),
+  beneficiaryShop: z.string().optional().nullable(),
 });
 
 export type CreateFinanceRecordInput = z.infer<typeof createFinanceRecordSchema>;
@@ -79,6 +82,9 @@ export const updateFinanceRecordSchema = z.object({
   isRelatedToBranch: z.boolean().optional(),
   relatedBranch: z.string().optional().nullable(),
   relatedBranchNote: z.string().optional(),
+  isCrossBranchPayment: z.boolean().optional(),
+  collectingShop: z.string().optional().nullable(),
+  beneficiaryShop: z.string().optional().nullable(),
 });
 
 export type UpdateFinanceRecordInput = z.infer<typeof updateFinanceRecordSchema>;
@@ -90,6 +96,9 @@ export const repayCustomerDebtSchema = z.object({
   paymentMethod: z.enum(["CASH", "BANK_TRANSFER", "ONLINE", "CHEQUE"]),
   bankAccountId: z.string().optional().nullable(),
   note: z.string().optional(),
+  isCrossBranchPayment: z.boolean().optional(),
+  collectingShop: z.string().optional().nullable(),
+  beneficiaryShop: z.string().optional().nullable(),
 });
 
 export type RepayCustomerDebtInput = z.infer<typeof repayCustomerDebtSchema>;
@@ -141,3 +150,15 @@ export const reviewFinanceRecordSchema = z
   );
 
 export type ReviewFinanceRecordInput = z.infer<typeof reviewFinanceRecordSchema>;
+
+export const settleInterBranchCashSchema = z.object({
+  recordIds: z.array(z.string()).min(1, "At least one record must be selected for settlement"),
+  holdingShopId: z.string().min(1, "Holding branch is required"),
+  targetShopId: z.string().optional().nullable(),
+  settlementType: z.enum(["HANDOVER_TO_BRANCH", "DEPOSITED_TO_BANK", "DIRECT_OFFSET"]),
+  bankAccountId: z.string().optional().nullable(),
+  reference: z.string().optional(),
+  note: z.string().optional(),
+});
+
+export type SettleInterBranchCashInput = z.infer<typeof settleInterBranchCashSchema>;

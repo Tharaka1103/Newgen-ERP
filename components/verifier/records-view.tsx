@@ -141,16 +141,16 @@ export function RecordsView({
   const columns: ColumnDef<any>[] = [
     {
       accessorKey: "date",
-      header: "Date",
+      header: () => <span className="whitespace-nowrap">Date</span>,
       cell: ({ row }) => (
-        <span className="font-mono text-xs">{new Date(row.original.date).toLocaleDateString()}</span>
+        <span className="font-mono text-xs whitespace-nowrap block">{new Date(row.original.date).toLocaleDateString()}</span>
       ),
     },
     {
       accessorKey: "shop.name",
-      header: "Branch",
+      header: () => <span className="whitespace-nowrap">Branch</span>,
       cell: ({ row }) => (
-        <span className="font-semibold text-xs text-foreground flex items-center gap-1.5">
+        <span className="font-semibold text-xs text-foreground flex items-center gap-1.5 whitespace-nowrap">
           <BuildingIcon className="size-3 text-muted-foreground" />
           {row.original.shop?.name || "—"}
         </span>
@@ -158,9 +158,9 @@ export function RecordsView({
     },
     {
       accessorKey: "billNumber",
-      header: "Bill No",
+      header: () => <span className="whitespace-nowrap">Bill No</span>,
       cell: ({ row }) => (
-        <span className="font-mono text-xs font-semibold text-primary">
+        <span className="font-mono text-xs font-semibold text-primary whitespace-nowrap block">
           {row.original.billNumber}
         </span>
       ),
@@ -179,18 +179,18 @@ export function RecordsView({
     },
     {
       accessorKey: "reason",
-      header: "Reason / Item Details",
+      header: () => <span className="w-[300px] min-w-[280px] max-w-[320px] block">Reason / Item Details</span>,
       cell: ({ row }) => {
         const r = row.original;
         const hasCommItem = Boolean(r.isCommunicationItem || r.itemCode || r.itemName);
         return (
-          <div className="max-w-[240px] space-y-1">
+          <div className="w-[300px] min-w-[280px] max-w-[320px] space-y-1.5 overflow-hidden whitespace-normal">
             {hasCommItem && (
               <div className="flex items-center gap-1 flex-wrap">
                 <Badge variant="secondary" className="text-[9px] font-mono px-1 py-0 h-3.5">
                   {r.itemCode || "COMM"}
                 </Badge>
-                <span className="text-xs font-semibold text-foreground truncate">
+                <span className="text-xs font-semibold text-foreground truncate max-w-[190px]">
                   {r.itemName || "Item"}
                 </span>
                 {r.quantity && r.quantity > 1 && (
@@ -200,17 +200,41 @@ export function RecordsView({
                 )}
               </div>
             )}
-            <p className="text-xs text-muted-foreground truncate" title={r.reason}>
+            <p className="text-xs text-muted-foreground break-words line-clamp-2" title={r.reason}>
               {r.reason}
             </p>
-            {r.isRelatedToBranch && (
-              <div className="space-y-0.5 pt-0.5">
-                <span className="inline-flex items-center gap-1 text-[9px] font-medium text-amber-700 dark:text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20">
-                  <BuildingIcon className="size-2.5" />
-                  Branch Ref: {r.relatedBranch?.name || "Other Branch"} {r.relatedBranch?.code ? `(${r.relatedBranch.code})` : ""}
-                </span>
+            {(r.isCrossBranchPayment || r.isRelatedToBranch) && (
+              <div className="rounded-md border border-blue-500/30 bg-blue-500/10 p-2 space-y-1 text-[10px]">
+                <div className="flex items-center justify-between gap-1">
+                  <div className="flex items-center gap-1 font-bold text-blue-700 dark:text-blue-300">
+                    <BuildingIcon className="size-3 text-blue-600 dark:text-blue-400 shrink-0" />
+                    <span className="uppercase tracking-wider text-[9px]">Cross-Branch</span>
+                  </div>
+                  {r.interBranchSettlementStatus && (
+                    <Badge
+                      variant="outline"
+                      className={`text-[8px] px-1.5 py-0 h-3.5 font-mono uppercase whitespace-nowrap ${
+                        r.interBranchSettlementStatus === "SETTLED"
+                          ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                          : "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-400"
+                      }`}
+                    >
+                      {r.interBranchSettlementStatus === "SETTLED" ? "Settled" : "Unsettled"}
+                    </Badge>
+                  )}
+                </div>
+
+                <div className="text-[10px] space-y-0.5 border-t border-blue-500/20 pt-1 text-muted-foreground leading-tight">
+                  <div className="truncate">
+                    Cash at: <strong className="text-foreground">{r.collectingShop?.name || r.shop?.name}</strong>
+                  </div>
+                  <div className="truncate">
+                    Income for: <strong className="text-blue-700 dark:text-blue-400">{r.beneficiaryShop?.name || r.relatedBranch?.name}</strong>
+                  </div>
+                </div>
+
                 {r.relatedBranchNote && (
-                  <p className="text-[10px] text-amber-800 dark:text-amber-300 italic bg-amber-500/5 px-1.5 py-0.5 rounded border border-amber-500/20 line-clamp-2" title={r.relatedBranchNote}>
+                  <p className="text-[9px] text-muted-foreground italic bg-background/50 p-1 rounded border border-border line-clamp-2" title={r.relatedBranchNote}>
                     Note: {r.relatedBranchNote}
                   </p>
                 )}
@@ -222,9 +246,9 @@ export function RecordsView({
     },
     {
       accessorKey: "amount",
-      header: "Submitted (LKR)",
+      header: () => <span className="whitespace-nowrap">Submitted (LKR)</span>,
       cell: ({ row }) => (
-        <span className="font-mono text-xs font-semibold text-foreground">
+        <span className="font-mono text-xs font-semibold text-foreground whitespace-nowrap block">
           {Number(row.original.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}
         </span>
       ),
@@ -232,43 +256,49 @@ export function RecordsView({
     {
       accessorKey: "status",
       header: "Status",
-      cell: ({ row }) => <StatusBadge status={row.original.status} />,
+      cell: ({ row }) => (
+        <div className="whitespace-nowrap">
+          <StatusBadge status={row.original.status} />
+        </div>
+      ),
     },
     {
       accessorKey: "createdBy.name",
-      header: "Submitted By",
+      header: () => <span className="whitespace-nowrap">Submitted By</span>,
       cell: ({ row }) => (
-        <span className="text-[11px] text-muted-foreground">
+        <span className="text-[11px] text-muted-foreground whitespace-nowrap block">
           {row.original.createdBy?.name || "Unknown"}
         </span>
       ),
     },
     {
       id: "actions",
-      header: "Action",
+      header: () => <span className="whitespace-nowrap">Action</span>,
       cell: ({ row }) => {
         const rec = row.original;
         const isPending = rec.status === "PENDING";
 
         return (
-          <Button
-            variant={isPending ? "default" : "outline"}
-            size="sm"
-            onClick={() => openReviewModal(rec)}
-            className="h-7 gap-1 text-xs"
-          >
-            {isPending ? (
-              <>
-                <CheckCheckIcon className="size-3.5" />
-                Review
-              </>
-            ) : (
-              <>
-                <LockIcon className="size-3 text-muted-foreground" />
-                View Details
-              </>
-            )}
-          </Button>
+          <div className="whitespace-nowrap">
+            <Button
+              variant={isPending ? "default" : "outline"}
+              size="sm"
+              onClick={() => openReviewModal(rec)}
+              className="h-7 gap-1 text-xs"
+            >
+              {isPending ? (
+                <>
+                  <CheckCheckIcon className="size-3.5" />
+                  Review
+                </>
+              ) : (
+                <>
+                  <LockIcon className="size-3 text-muted-foreground" />
+                  View Details
+                </>
+              )}
+            </Button>
+          </div>
         );
       },
     },
@@ -443,28 +473,48 @@ export function RecordsView({
                 )}
 
                 {/* Cross-Branch Transfer Details */}
-                {selectedRecord?.isRelatedToBranch && (
-                  <div className="p-3.5 rounded-xl border border-amber-500/30 bg-amber-500/10 space-y-2.5 text-xs">
-                    <div className="flex items-center gap-1.5 font-semibold text-amber-800 dark:text-amber-300">
-                      <BuildingIcon className="size-3.5" />
-                      Cross-Branch Transfer Details
+                {(selectedRecord?.isCrossBranchPayment || selectedRecord?.isRelatedToBranch) && (
+                  <div className="p-3.5 rounded-xl border border-blue-500/30 bg-blue-500/10 space-y-2.5 text-xs">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5 font-bold text-blue-800 dark:text-blue-300">
+                        <BuildingIcon className="size-3.5 text-blue-600 dark:text-blue-400" />
+                        <span>Cross-Branch Transaction Details</span>
+                      </div>
+                      <Badge
+                        variant="outline"
+                        className={`text-[10px] px-2 py-0.5 font-mono uppercase ${
+                          selectedRecord.interBranchSettlementStatus === "SETTLED"
+                            ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
+                            : "border-amber-500/40 bg-amber-500/15 text-amber-700 dark:text-amber-400"
+                        }`}
+                      >
+                        {selectedRecord.interBranchSettlementStatus === "SETTLED" ? "Settled" : "Unsettled Inter-Branch Cash"}
+                      </Badge>
                     </div>
-                    <div className="grid grid-cols-2 gap-2 text-[11px]">
+
+                    <div className="grid grid-cols-2 gap-2 text-[11px] bg-background/60 p-2.5 rounded-lg border border-blue-500/20">
                       <div>
-                        <span className="text-muted-foreground block text-[10px] uppercase">Originating Branch</span>
-                        <span className="font-semibold text-foreground">{selectedRecord?.shop?.name} ({selectedRecord?.shop?.code})</span>
+                        <span className="text-muted-foreground block text-[10px] uppercase font-semibold">Cash Drawer (Collecting Branch)</span>
+                        <span className="font-semibold text-foreground">
+                          {selectedRecord?.collectingShop?.name || selectedRecord?.shop?.name} ({selectedRecord?.collectingShop?.code || selectedRecord?.shop?.code})
+                        </span>
                       </div>
                       <div>
-                        <span className="text-muted-foreground block text-[10px] uppercase">Target / Related Branch</span>
-                        <span className="font-bold text-amber-700 dark:text-amber-400">
-                          {selectedRecord?.relatedBranch?.name || "Specified Branch"} {selectedRecord?.relatedBranch?.code ? `(${selectedRecord.relatedBranch.code})` : ""}
+                        <span className="text-muted-foreground block text-[10px] uppercase font-semibold">Income Beneficiary (Sales Branch)</span>
+                        <span className="font-bold text-blue-700 dark:text-blue-400">
+                          {selectedRecord?.beneficiaryShop?.name || selectedRecord?.relatedBranch?.name || "Specified Branch"} ({selectedRecord?.beneficiaryShop?.code || selectedRecord?.relatedBranch?.code || "—"})
                         </span>
                       </div>
                     </div>
+
+                    <p className="text-[11px] text-muted-foreground">
+                      💡 <strong>Accounting Impact:</strong> Approving this transaction adds physical cash to <strong>{selectedRecord?.collectingShop?.name || selectedRecord?.shop?.name}</strong> drawer, and credits income to <strong>{selectedRecord?.beneficiaryShop?.name || selectedRecord?.relatedBranch?.name}</strong>.
+                    </p>
+
                     {selectedRecord?.relatedBranchNote && (
-                      <div className="pt-1.5 border-t border-amber-500/20">
+                      <div className="pt-1.5 border-t border-blue-500/20">
                         <span className="text-muted-foreground block text-[10px] uppercase font-semibold">Branch Transfer Note:</span>
-                        <p className="mt-1 text-xs text-foreground font-medium bg-background/80 p-2.5 rounded-lg border border-amber-500/20 whitespace-pre-wrap">
+                        <p className="mt-1 text-xs text-foreground font-medium bg-background/80 p-2.5 rounded-lg border border-blue-500/20 whitespace-pre-wrap">
                           {selectedRecord.relatedBranchNote}
                         </p>
                       </div>

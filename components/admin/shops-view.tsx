@@ -75,6 +75,10 @@ interface ShopItem {
   recordsCount: number;
   currentBalance: number;
   totalCustomerCredit?: number;
+  interBranchDues?: {
+    totalHolding: number;
+    totalOwed: number;
+  };
 }
 
 export function ShopsView({ initialShops }: { initialShops: ShopItem[] }) {
@@ -253,6 +257,16 @@ export function ShopsView({ initialShops }: { initialShops: ShopItem[] }) {
             {isComm && credit > 0 && (
               <span className="font-mono text-[10px] text-amber-600 dark:text-amber-400 font-medium">
                 Credit: LKR {Number(credit).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+              </span>
+            )}
+            {row.original.interBranchDues && row.original.interBranchDues.totalHolding > 0 && (
+              <span className="font-mono text-[9px] text-blue-600 dark:text-blue-400 font-medium">
+                Holds LKR {Number(row.original.interBranchDues.totalHolding).toLocaleString()} for others
+              </span>
+            )}
+            {row.original.interBranchDues && row.original.interBranchDues.totalOwed > 0 && (
+              <span className="font-mono text-[9px] text-purple-600 dark:text-purple-400 font-medium">
+                Owed LKR {Number(row.original.interBranchDues.totalOwed).toLocaleString()}
               </span>
             )}
           </div>

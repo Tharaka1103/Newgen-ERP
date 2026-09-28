@@ -10,7 +10,7 @@ import { sanitizeInput } from "@/lib/sanitize";
 import { createShopSchema, updateShopSchema } from "@/schemas/shop";
 import { isAdmin } from "@/lib/rbac";
 import { logAuditEvent } from "@/lib/audit";
-import { getShopCashBalance } from "@/lib/balance";
+import { getShopCashBalance, getShopInterBranchDues } from "@/lib/balance";
 import mongoose from "mongoose";
 
 export async function getShopsAction() {
@@ -33,6 +33,7 @@ export async function getShopsAction() {
 
         // Compute true physical cash balance
         const currentBalance = await getShopCashBalance(shop._id);
+        const interBranchDues = await getShopInterBranchDues(shop._id);
 
         let totalCustomerCredit = 0;
         if (shop.shopType === "COMMUNICATION") {
@@ -51,6 +52,10 @@ export async function getShopsAction() {
           recordsCount,
           currentBalance,
           totalCustomerCredit,
+          interBranchDues: {
+            totalHolding: interBranchDues.totalHolding,
+            totalOwed: interBranchDues.totalOwed,
+          },
         };
       })
     );
@@ -87,8 +92,9 @@ export async function getShopDetailsAction(shopId: string) {
     const pendingCount = await FinanceRecord.countDocuments({ shop: shop._id, status: "PENDING", isDeleted: { $ne: true } });
     const approvedCount = await FinanceRecord.countDocuments({ shop: shop._id, status: "APPROVED", isDeleted: { $ne: true } });
 
-    // Compute true physical cash balance
+    // Compute true physical cash balance and inter-branch dues
     const currentBalance = await getShopCashBalance(shop._id);
+    const interBranchDues = await getShopInterBranchDues(shop._id);
 
     let totalCustomerCredit = 0;
     let creditCustomerCount = 0;
@@ -120,6 +126,7 @@ export async function getShopDetailsAction(shopId: string) {
         currentBalance,
         totalCustomerCredit,
         creditCustomerCount,
+        interBranchDues: JSON.parse(JSON.stringify(interBranchDues)),
       },
     };
   } catch (error) {

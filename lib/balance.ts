@@ -83,7 +83,10 @@ export async function recalculateShopRunningBalance(
 /**
  * Calculates the exact physical cash balance for a shop.
  * Excludes soft-deleted records, rejected records, and unpaid credit sales.
- * Takes into account approved amount for approved records and submitted amount for pending records.
+ * Correctly accounts for:
+ * 1. Standard shop physical cash transactions.
+ * 2. Cross-branch cash physically collected AT this shop (holding cash until settled).
+ * 3. Cross-branch cash physically HANDED OVER to this shop from other collecting branches.
  */
 export async function getShopCashBalance(
   shopId: string | mongoose.Types.ObjectId
@@ -91,10 +94,12 @@ export async function getShopCashBalance(
   await connectDB();
   const shopObjId = new mongoose.Types.ObjectId(shopId.toString());
 
-  const balanceAgg = await FinanceRecord.aggregate([
+  // 1. Standard non-cross-branch cash transactions at this shop
+  const standardCashAgg = await FinanceRecord.aggregate([
     {
       $match: {
         shop: shopObjId,
+        isCrossBranchPayment: { $ne: true },
         isDeleted: { $ne: true },
         status: { $ne: "REJECTED" },
         paymentMethod: { $ne: "CREDIT" },
@@ -128,5 +133,220 @@ export async function getShopCashBalance(
     },
   ]);
 
-  return balanceAgg.length > 0 ? balanceAgg[0].balance : 0;
+  // 2. Cross-branch cash physically collected AT this shop (as collectingShop)
+  // While UNSETTLED: cash physically sits in this shop's drawer (+effectiveAmount).
+  // Once SETTLED: cash was handed over to beneficiary branch or deposited into bank (removed from drawer).
+  const collectingCashAgg = await FinanceRecord.aggregate([
+    {
+      $match: {
+        collectingShop: shopObjId,
+        isCrossBranchPayment: true,
+        isDeleted: { $ne: true },
+        status: "APPROVED",
+        paymentMethod: { $ne: "CREDIT" },
+      },
+    },
+    {
+      $project: {
+        effectiveAmount: {
+          $cond: [{ $ne: ["$approvedAmount", null] }, "$approvedAmount", "$amount"],
+        },
+        interBranchSettlementStatus: 1,
+      },
+    },
+    {
+      $group: {
+        _id: null,
+        balance: {
+          $sum: {
+            $cond: [
+              { $eq: ["$interBranchSettlementStatus", "UNSETTLED"] },
+              "$effectiveAmount",
+              0,
+            ],
+          },
+        },
+      },
+    },
+  ]);
+
+  // 3. Cross-branch cash where this shop is the beneficiaryShop AND cash was physically HANDED OVER to this shop
+  const beneficiaryHandoverAgg = await FinanceRecord.aggregate([
+    {
+      $match: {
+        beneficiaryShop: shopObjId,
+        isCrossBranchPayment: true,
+        isDeleted: { $ne: true },
+        status: "APPROVED",
+        paymentMethod: { $ne: "CREDIT" },
+        interBranchSettlementStatus: "SETTLED",
+        settlementType: "HANDOVER_TO_BRANCH",
+      },
+    },
+    {
+      $project: {
+        effectiveAmount: {
+          $cond: [{ $ne: ["$approvedAmount", null] }, "$approvedAmount", "$amount"],
+        },
+      },
+    },
+    {
+      $group: {
+        _id: null,
+        balance: { $sum: "$effectiveAmount" },
+      },
+    },
+  ]);
+
+  const standardBalance = standardCashAgg.length > 0 ? standardCashAgg[0].balance : 0;
+  const collectingBalance = collectingCashAgg.length > 0 ? collectingCashAgg[0].balance : 0;
+  const beneficiaryBalance = beneficiaryHandoverAgg.length > 0 ? beneficiaryHandoverAgg[0].balance : 0;
+
+  return standardBalance + collectingBalance + beneficiaryBalance;
 }
+
+/**
+ * Returns inter-branch balances:
+ * - holdingForOthers: cash this shop physically holds that belongs to other shops (UNSETTLED).
+ * - owedFromOthers: cash other shops collected for this shop that haven't been handed over yet.
+ */
+export async function getShopInterBranchDues(
+  shopId: string | mongoose.Types.ObjectId
+): Promise<{
+  holdingForOthers: Array<{
+    shopId: string;
+    shopName: string;
+    shopCode: string;
+    totalAmount: number;
+    count: number;
+    recordIds: string[];
+  }>;
+  owedFromOthers: Array<{
+    shopId: string;
+    shopName: string;
+    shopCode: string;
+    totalAmount: number;
+    count: number;
+    recordIds: string[];
+  }>;
+  totalHolding: number;
+  totalOwed: number;
+}> {
+  await connectDB();
+  const shopObjId = new mongoose.Types.ObjectId(shopId.toString());
+
+  // 1. Records where this shop collected cash on behalf of another shop (UNSETTLED)
+  const holdingAgg = await FinanceRecord.aggregate([
+    {
+      $match: {
+        collectingShop: shopObjId,
+        beneficiaryShop: { $ne: null },
+        isCrossBranchPayment: true,
+        interBranchSettlementStatus: "UNSETTLED",
+        status: "APPROVED",
+        isDeleted: { $ne: true },
+      },
+    },
+    {
+      $project: {
+        beneficiaryShop: 1,
+        effectiveAmount: {
+          $cond: [{ $ne: ["$approvedAmount", null] }, "$approvedAmount", "$amount"],
+        },
+      },
+    },
+    {
+      $group: {
+        _id: "$beneficiaryShop",
+        totalAmount: { $sum: "$effectiveAmount" },
+        count: { $sum: 1 },
+        recordIds: { $push: { $toString: "$_id" } },
+      },
+    },
+    {
+      $lookup: {
+        from: "shops",
+        localField: "_id",
+        foreignField: "_id",
+        as: "shopDoc",
+      },
+    },
+    {
+      $unwind: { path: "$shopDoc", preserveNullAndEmptyArrays: true },
+    },
+    {
+      $project: {
+        shopId: { $toString: "$_id" },
+        shopName: { $ifNull: ["$shopDoc.name", "Unknown Branch"] },
+        shopCode: { $ifNull: ["$shopDoc.code", "SHOP"] },
+        totalAmount: 1,
+        count: 1,
+        recordIds: 1,
+      },
+    },
+  ]);
+
+  // 2. Records where another shop collected cash for THIS shop (UNSETTLED)
+  const owedAgg = await FinanceRecord.aggregate([
+    {
+      $match: {
+        beneficiaryShop: shopObjId,
+        collectingShop: { $ne: null },
+        isCrossBranchPayment: true,
+        interBranchSettlementStatus: "UNSETTLED",
+        status: "APPROVED",
+        isDeleted: { $ne: true },
+      },
+    },
+    {
+      $project: {
+        collectingShop: 1,
+        effectiveAmount: {
+          $cond: [{ $ne: ["$approvedAmount", null] }, "$approvedAmount", "$amount"],
+        },
+      },
+    },
+    {
+      $group: {
+        _id: "$collectingShop",
+        totalAmount: { $sum: "$effectiveAmount" },
+        count: { $sum: 1 },
+        recordIds: { $push: { $toString: "$_id" } },
+      },
+    },
+    {
+      $lookup: {
+        from: "shops",
+        localField: "_id",
+        foreignField: "_id",
+        as: "shopDoc",
+      },
+    },
+    {
+      $unwind: { path: "$shopDoc", preserveNullAndEmptyArrays: true },
+    },
+    {
+      $project: {
+        shopId: { $toString: "$_id" },
+        shopName: { $ifNull: ["$shopDoc.name", "Unknown Branch"] },
+        shopCode: { $ifNull: ["$shopDoc.code", "SHOP"] },
+        totalAmount: 1,
+        count: 1,
+        recordIds: 1,
+      },
+    },
+  ]);
+
+  const holdingForOthers = holdingAgg || [];
+  const owedFromOthers = owedAgg || [];
+  const totalHolding = holdingForOthers.reduce((sum, h) => sum + (h.totalAmount || 0), 0);
+  const totalOwed = owedFromOthers.reduce((sum, o) => sum + (o.totalAmount || 0), 0);
+
+  return {
+    holdingForOthers,
+    owedFromOthers,
+    totalHolding,
+    totalOwed,
+  };
+}
+

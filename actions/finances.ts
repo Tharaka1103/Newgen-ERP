@@ -16,11 +16,13 @@ import {
   createFinanceRecordSchema,
   updateFinanceRecordSchema,
   reviewFinanceRecordSchema,
+  settleInterBranchCashSchema,
 } from "@/schemas/finance";
 import { canCreateFinanceRecord, canReviewFinanceRecord, isAdmin } from "@/lib/rbac";
-import { recalculateShopRunningBalance } from "@/lib/balance";
+import { recalculateShopRunningBalance, getShopInterBranchDues } from "@/lib/balance";
 import { logAuditEvent } from "@/lib/audit";
 import mongoose from "mongoose";
+import { revalidatePath } from "next/cache";
 
 interface GetFinanceRecordsParams {
   shopId?: string;
@@ -109,8 +111,11 @@ export async function getFinanceRecordsAction(params: GetFinanceRecordsParams = 
         .populate("category", "name type colorToken")
         .populate("bankAccount", "bankName accountName accountNumber")
         .populate("relatedBranch", "name code")
+        .populate("collectingShop", "name code shopType")
+        .populate("beneficiaryShop", "name code shopType")
         .populate("createdBy", "name email")
         .populate("reviewedBy", "name email")
+        .populate("settledBy", "name email")
         .sort({ date: -1, createdAt: -1 })
         .skip(skip)
         .limit(limit)
@@ -208,16 +213,21 @@ export async function createFinanceRecordAction(formData: unknown) {
 
     const recordDate = new Date(result.data.date);
     const isCommShop = shop.shopType === "COMMUNICATION";
-    const isBranchRelated = Boolean(result.data.isRelatedToBranch);
+    const isCrossBranch = Boolean(result.data.isCrossBranchPayment);
+    const isBranchRelated = Boolean(result.data.isRelatedToBranch) || isCrossBranch;
 
-    // Business Rule for Communication Shop:
-    // Only branch-related transactions need verifier approval.
+    const beneficiaryShopId = isCrossBranch && result.data.beneficiaryShop
+      ? new mongoose.Types.ObjectId(result.data.beneficiaryShop)
+      : (result.data.relatedBranch ? new mongoose.Types.ObjectId(result.data.relatedBranch) : null);
+
+    // Business Rule:
+    // Transactions related to another branch or cross-branch payments ALWAYS require Verifier/Admin approval.
     // Non-branch related communication retail sales are auto-approved immediately.
     let recordStatus: "PENDING" | "APPROVED" = "PENDING";
     let approvedAmount: number | null = null;
     let isLocked = false;
 
-    if (isCommShop && !isBranchRelated) {
+    if (isCommShop && !isBranchRelated && !isCrossBranch) {
       recordStatus = "APPROVED";
       approvedAmount = result.data.amount;
       isLocked = true;
@@ -229,7 +239,7 @@ export async function createFinanceRecordAction(formData: unknown) {
 
     const relatedBranchId = result.data.relatedBranch
       ? new mongoose.Types.ObjectId(result.data.relatedBranch)
-      : null;
+      : (beneficiaryShopId || null);
 
     const newRecord = await FinanceRecord.create({
       date: recordDate,
@@ -245,6 +255,12 @@ export async function createFinanceRecordAction(formData: unknown) {
       approvedAmount,
       runningBalance: 0,
       isLocked,
+
+      // Cross-Branch Payment & Inter-Branch Settlement Fields
+      isCrossBranchPayment: isCrossBranch,
+      collectingShop: isCrossBranch ? shop._id : null,
+      beneficiaryShop: isCrossBranch ? beneficiaryShopId : null,
+      interBranchSettlementStatus: isCrossBranch ? "UNSETTLED" : undefined,
 
       // Communication fields
       isCommunicationItem: Boolean(result.data.isCommunicationItem),
@@ -408,12 +424,38 @@ export async function updateFinanceRecordAction(formData: unknown) {
       }
     }
 
+    if (result.data.isCrossBranchPayment !== undefined) {
+      record.isCrossBranchPayment = Boolean(result.data.isCrossBranchPayment);
+      record.collectingShop = record.isCrossBranchPayment ? (record.shop || null) : null;
+      record.beneficiaryShop = record.isCrossBranchPayment && result.data.beneficiaryShop
+        ? new mongoose.Types.ObjectId(result.data.beneficiaryShop)
+        : null;
+
+      if (record.isCrossBranchPayment && !record.interBranchSettlementStatus) {
+        record.interBranchSettlementStatus = "UNSETTLED";
+      }
+
+      if (record.isCrossBranchPayment && record.status === "APPROVED") {
+        record.status = "PENDING";
+        record.approvedAmount = null;
+        record.isLocked = false;
+      }
+    }
+
     await record.save();
 
     // Recalculate running balance
+    const earliestDate = previousDate < record.date ? previousDate : record.date;
     if (record.shop) {
-      const earliestDate = previousDate < record.date ? previousDate : record.date;
       await recalculateShopRunningBalance(record.shop, earliestDate);
+    }
+    if (record.isCrossBranchPayment) {
+      if (record.collectingShop && record.collectingShop.toString() !== record.shop?.toString()) {
+        await recalculateShopRunningBalance(record.collectingShop, earliestDate);
+      }
+      if (record.beneficiaryShop) {
+        await recalculateShopRunningBalance(record.beneficiaryShop, earliestDate);
+      }
     }
 
     await logAuditEvent({
@@ -590,9 +632,27 @@ export async function reviewFinanceRecordAction(formData: unknown) {
       }
     }
 
+    // If Rejected and was a customer debt repayment, restore customer credit balance
+    if (!isApprove && record.isDebtRepayment && record.customerCredit) {
+      const cust = await CustomerCredit.findById(record.customerCredit);
+      if (cust) {
+        cust.totalPaid = Math.max(0, cust.totalPaid - record.amount);
+        cust.currentBalance += record.amount;
+        await cust.save();
+      }
+    }
+
     // Recalculate running balance from this record's date
     if (record.shop) {
       await recalculateShopRunningBalance(record.shop, record.date);
+    }
+    if (record.isCrossBranchPayment) {
+      if (record.collectingShop && record.collectingShop.toString() !== record.shop?.toString()) {
+        await recalculateShopRunningBalance(record.collectingShop, record.date);
+      }
+      if (record.beneficiaryShop) {
+        await recalculateShopRunningBalance(record.beneficiaryShop, record.date);
+      }
     }
 
     await logAuditEvent({
@@ -809,6 +869,12 @@ export async function createCommunicationSaleBatchAction(payload: {
         relatedBranch: relatedBranchId,
         relatedBranchNote,
 
+        // Cross-Branch Payment fields
+        isCrossBranchPayment: isBranchRelated,
+        collectingShop: isBranchRelated ? shop._id : null,
+        beneficiaryShop: isBranchRelated ? relatedBranchId : null,
+        interBranchSettlementStatus: isBranchRelated ? "UNSETTLED" : undefined,
+
         isDeleted: false,
         createdBy: new mongoose.Types.ObjectId(session.user.id),
       });
@@ -877,3 +943,157 @@ export async function createCommunicationSaleBatchAction(payload: {
     return { success: false, error: "Failed to record communication sale." };
   }
 }
+
+/**
+ * Settles cross-branch collected physical cash.
+ * Can handover physical cash to target branch, deposit directly into company bank account, or direct offset.
+ */
+export async function settleInterBranchCashAction(formData: unknown) {
+  const session = await auth();
+  if (!session?.user?.id) {
+    return { success: false, error: "Unauthorized" };
+  }
+
+  const role = (session.user as { role?: string }).role;
+  if (!isAdmin(role)) {
+    return { success: false, error: "Only administrators can perform inter-branch cash settlements." };
+  }
+
+  const cleanData = sanitizeInput(formData);
+  const result = settleInterBranchCashSchema.safeParse(cleanData);
+
+  if (!result.success) {
+    return {
+      success: false,
+      error: result.error.issues[0]?.message || "Validation failed",
+    };
+  }
+
+  const {
+    recordIds,
+    holdingShopId,
+    targetShopId,
+    settlementType,
+    bankAccountId,
+    reference,
+    note,
+  } = result.data;
+
+  try {
+    await connectDB();
+
+    const holdingShop = await Shop.findById(holdingShopId);
+    if (!holdingShop) {
+      return { success: false, error: "Holding branch not found." };
+    }
+
+    const objectIds = recordIds.map((id) => new mongoose.Types.ObjectId(id));
+
+    const records = await FinanceRecord.find({
+      _id: { $in: objectIds },
+      collectingShop: holdingShop._id,
+      interBranchSettlementStatus: "UNSETTLED",
+      isDeleted: { $ne: true },
+    });
+
+    if (records.length === 0) {
+      return {
+        success: false,
+        error: "No unsettled cross-branch records found matching the selection.",
+      };
+    }
+
+    let totalAmount = 0;
+    for (const rec of records) {
+      const amt =
+        rec.status === "APPROVED" && typeof rec.approvedAmount === "number"
+          ? rec.approvedAmount
+          : rec.amount;
+      totalAmount += amt;
+    }
+
+    // If deposited to bank, ensure bank account exists and credit it
+    let bankAccountDoc = null;
+    if (settlementType === "DEPOSITED_TO_BANK") {
+      if (!bankAccountId) {
+        return { success: false, error: "Bank account is required when depositing to bank." };
+      }
+      bankAccountDoc = await BankAccount.findById(bankAccountId);
+      if (!bankAccountDoc || !bankAccountDoc.isActive) {
+        return { success: false, error: "Valid active bank account is required." };
+      }
+      bankAccountDoc.currentBalance += totalAmount;
+      await bankAccountDoc.save();
+    }
+
+    const now = new Date();
+    await FinanceRecord.updateMany(
+      { _id: { $in: records.map((r) => r._id) } },
+      {
+        $set: {
+          interBranchSettlementStatus: "SETTLED",
+          settledAt: now,
+          settledBy: new mongoose.Types.ObjectId(session.user.id),
+          settlementType,
+          settlementReference: reference ? reference.trim() : "",
+          settlementNote: note ? note.trim() : "",
+          ...(bankAccountId ? { bankAccount: new mongoose.Types.ObjectId(bankAccountId) } : {}),
+        },
+      }
+    );
+
+    // Recalculate cash drawers and running balances
+    await recalculateShopRunningBalance(holdingShop._id, now);
+    if (targetShopId) {
+      await recalculateShopRunningBalance(targetShopId, now);
+    }
+
+    await logAuditEvent({
+      actorId: session.user.id,
+      action: "SETTLE_INTER_BRANCH_CASH",
+      targetType: "Shop",
+      targetId: holdingShop._id,
+      metadata: {
+        holdingShop: holdingShop.name,
+        targetShopId,
+        settlementType,
+        settledRecordsCount: records.length,
+        totalAmount,
+        bankAccount: bankAccountDoc ? bankAccountDoc.bankName : null,
+        reference,
+      },
+    });
+
+    revalidatePath("/dashboard/admin/shops");
+    revalidatePath(`/dashboard/admin/shops/${holdingShopId}`);
+    if (targetShopId) {
+      revalidatePath(`/dashboard/admin/shops/${targetShopId}`);
+    }
+
+    return {
+      success: true,
+      message: `Successfully settled LKR ${totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })} across ${records.length} record(s) via ${settlementType.replace(/_/g, " ")}.`,
+      totalAmount,
+      count: records.length,
+    };
+  } catch (error) {
+    console.error("Inter-branch settlement error:", error);
+    return { success: false, error: "Failed to settle inter-branch cash." };
+  }
+}
+
+export async function getShopInterBranchDuesAction(shopId: string) {
+  const session = await auth();
+  if (!session?.user?.id) {
+    return { success: false, error: "Unauthorized" };
+  }
+
+  try {
+    const dues = await getShopInterBranchDues(shopId);
+    return { success: true, dues: JSON.parse(JSON.stringify(dues)) };
+  } catch (error) {
+    console.error("Get shop inter-branch dues error:", error);
+    return { success: false, error: "Failed to fetch inter-branch dues." };
+  }
+}
+

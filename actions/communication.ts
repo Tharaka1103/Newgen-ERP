@@ -304,9 +304,12 @@ export async function getCommunicationAnalyticsAction(params: CommunicationAnaly
     }
 
     const query: Record<string, unknown> = {
-      shop: shop._id,
       isDeleted: { $ne: true },
       date: { $gte: start, $lte: end },
+      $or: [
+        { shop: shop._id, isCrossBranchPayment: { $ne: true } },
+        { beneficiaryShop: shop._id, isCrossBranchPayment: true },
+      ],
     };
 
     if (params.itemCodeFilter && params.itemCodeFilter !== "ALL") {
@@ -317,6 +320,8 @@ export async function getCommunicationAnalyticsAction(params: CommunicationAnaly
       FinanceRecord.find(query)
         .populate("category", "name")
         .populate("relatedBranch", "name code")
+        .populate("collectingShop", "name code")
+        .populate("beneficiaryShop", "name code")
         .populate("createdBy", "name")
         .sort({ date: -1, createdAt: -1 })
         .lean(),

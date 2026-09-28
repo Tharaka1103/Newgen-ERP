@@ -63,6 +63,7 @@ export async function getSummaryAnalyticsAction(params: AnalyticsParams = {}) {
 
     const query: Record<string, unknown> = {
       date: { $gte: start, $lte: end },
+      isDeleted: { $ne: true },
     };
 
     if (role === "STAFF") {
@@ -84,9 +85,17 @@ export async function getSummaryAnalyticsAction(params: AnalyticsParams = {}) {
           records: [],
         };
       }
-      query.shop = new mongoose.Types.ObjectId(userShop);
+      const staffShopObjId = new mongoose.Types.ObjectId(userShop);
+      query.$or = [
+        { shop: staffShopObjId, isCrossBranchPayment: { $ne: true } },
+        { beneficiaryShop: staffShopObjId, isCrossBranchPayment: true },
+      ];
     } else if (params.shopId && params.shopId !== "ALL") {
-      query.shop = new mongoose.Types.ObjectId(params.shopId);
+      const adminShopObjId = new mongoose.Types.ObjectId(params.shopId);
+      query.$or = [
+        { shop: adminShopObjId, isCrossBranchPayment: { $ne: true } },
+        { beneficiaryShop: adminShopObjId, isCrossBranchPayment: true },
+      ];
     }
 
     if (params.categoryId && params.categoryId !== "ALL") {
