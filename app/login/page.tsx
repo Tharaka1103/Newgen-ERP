@@ -116,12 +116,6 @@ export default function LoginPage() {
     }
   };
 
-  const handleQuickFill = (email: string, pass: string) => {
-    setValue("email", email, { shouldValidate: true });
-    setValue("password", pass, { shouldValidate: true });
-    setErrorMsg(null);
-  };
-
   return (
     <div className="min-h-screen w-full bg-background text-foreground antialiased grid lg:grid-cols-12 selection:bg-primary/20">
       {/* LEFT SIDE: Visual Showcase (Full SVG Display, Minimalist, No Gradients) */}
@@ -276,51 +270,6 @@ export default function LoginPage() {
               )}
             </Button>
           </form>
-
-          {/* Quick Fill Testing Helper (Minimalist Pills) */}
-          <div className="pt-4 border-t border-border space-y-2">
-            <div className="text-[11px] font-medium text-muted-foreground">
-              Demo Access:
-            </div>
-            <div className="flex flex-wrap gap-1.5">
-              <Button
-                type="button"
-                variant="outline"
-                size="xs"
-                onClick={() => handleQuickFill("admin@newgen.lk", "Admin@12345")}
-                className="text-xs h-7 px-2.5 rounded-md hover:bg-muted"
-              >
-                Admin
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                size="xs"
-                onClick={() => handleQuickFill("verifier@newgen.lk", "Verifier@12345")}
-                className="text-xs h-7 px-2.5 rounded-md hover:bg-muted"
-              >
-                Verifier
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                size="xs"
-                onClick={() => handleQuickFill("staff.danuma@newgen.lk", "Staff@12345")}
-                className="text-xs h-7 px-2.5 rounded-md hover:bg-muted"
-              >
-                Danuma
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                size="xs"
-                onClick={() => handleQuickFill("staff.matale@newgen.lk", "Staff@12345")}
-                className="text-xs h-7 px-2.5 rounded-md hover:bg-muted"
-              >
-                Matale
-              </Button>
-            </div>
-          </div>
         </div>
 
         {/* Footer */}
