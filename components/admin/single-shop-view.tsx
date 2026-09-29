@@ -10,6 +10,7 @@ import {
   updateCommunicationItemAction,
   deleteCommunicationItemAction,
   getCommunicationAnalyticsAction,
+  getItemWastageAnalyticsAction,
 } from "@/actions/communication";
 import {
   getShopCreditCustomersAction,
@@ -88,6 +89,9 @@ import {
   TagIcon,
   XIcon,
   LandmarkIcon,
+  AlertOctagonIcon,
+  PercentIcon,
+  FlameIcon,
 } from "lucide-react";
 import { toast } from "@/components/ui/toast";
 import { useForm } from "react-hook-form";
@@ -97,6 +101,7 @@ import {
   updateCommunicationItemSchema,
   CreateCommunicationItemInput,
   UpdateCommunicationItemInput,
+  classifyTelecomOperator,
   type TelecomOperator,
 } from "@/schemas/communication";
 
@@ -157,7 +162,7 @@ export function SingleShopView({
 }: SingleShopViewProps) {
   const isCommunication = initialShop.shopType === "COMMUNICATION";
 
-  const [activeTab, setActiveTab] = React.useState<"overview" | "itemSales" | "items" | "credits" | "staff">("overview");
+  const [activeTab, setActiveTab] = React.useState<"overview" | "itemSales" | "items" | "wastage" | "credits" | "staff">("overview");
   const [period, setPeriod] = React.useState<"today" | "week" | "month" | "year" | "custom">("month");
   const [startDate, setStartDate] = React.useState<string>("");
   const [endDate, setEndDate] = React.useState<string>("");
@@ -173,6 +178,14 @@ export function SingleShopView({
     "revenue" | "profit" | "quantity" | "margin" | "code"
   >("revenue");
   const [itemSortOrder, setItemSortOrder] = React.useState<"asc" | "desc">("desc");
+
+  // Registered Products & Services (Items Tab) Filter & Sort State
+  const [commItemSearch, setCommItemSearch] = React.useState<string>("");
+  const [commItemTypeFilter, setCommItemTypeFilter] = React.useState<"ALL" | "RELOAD" | "STANDARD">("ALL");
+  const [commItemOperatorFilter, setCommItemOperatorFilter] = React.useState<"ALL" | TelecomOperator>("ALL");
+  const [commItemStatusFilter, setCommItemStatusFilter] = React.useState<"ALL" | "ACTIVE" | "DISABLED">("ALL");
+  const [commItemSortBy, setCommItemSortBy] = React.useState<"name" | "code" | "actualPrice" | "sellingPrice" | "margin">("code");
+  const [commItemSortOrder, setCommItemSortOrder] = React.useState<"asc" | "desc">("asc");
 
   const [shop, setShop] = React.useState(initialShop);
   const [staff, setStaff] = React.useState<AssignedStaff[]>(initialStaff);
@@ -193,6 +206,26 @@ export function SingleShopView({
   });
   const [creditSearch, setCreditSearch] = React.useState("");
   const [creditLoading, setCreditLoading] = React.useState(false);
+
+  // Wastage & Defect Loss State
+  const [wastageAnalytics, setWastageAnalytics] = React.useState<{
+    totalWastedUnits: number;
+    totalMonetaryLoss: number;
+    incidentCount: number;
+    itemBreakdown: Array<{
+      itemCode: string;
+      itemName: string;
+      unitsWasted: number;
+      totalLoss: number;
+    }>;
+    incidents: any[];
+  }>({
+    totalWastedUnits: 0,
+    totalMonetaryLoss: 0,
+    incidentCount: 0,
+    itemBreakdown: [],
+    incidents: [],
+  });
 
   // Statement Dialog State
   const [statementOpen, setStatementOpen] = React.useState(false);
@@ -232,7 +265,7 @@ export function SingleShopView({
   const [selectedItem, setSelectedItem] = React.useState<any | null>(null);
 
   const createItemForm = useForm<CreateCommunicationItemInput>({
-    resolver: zodResolver(createCommunicationItemSchema),
+    resolver: zodResolver(createCommunicationItemSchema) as any,
     defaultValues: {
       shopId: initialShop._id,
       itemCode: "",
@@ -240,11 +273,14 @@ export function SingleShopView({
       actualPrice: 0,
       sellingPrice: 0,
       description: "",
+      isTelecomReload: false,
+      telecomOperator: "DIALOG",
+      commissionRate: 4.5,
     },
   });
 
   const editItemForm = useForm<UpdateCommunicationItemInput>({
-    resolver: zodResolver(updateCommunicationItemSchema),
+    resolver: zodResolver(updateCommunicationItemSchema) as any,
     defaultValues: {
       itemId: "",
       itemCode: "",
@@ -252,6 +288,9 @@ export function SingleShopView({
       actualPrice: 0,
       sellingPrice: 0,
       description: "",
+      isTelecomReload: false,
+      telecomOperator: "DIALOG",
+      commissionRate: 4.5,
       isActive: true,
     },
   });
@@ -402,7 +441,7 @@ export function SingleShopView({
 
       // If communication, also fetch items, communication analytics & customer credits
       if (isCommunication) {
-        const [itemsRes, commAnalyticsRes, creditRes] = await Promise.all([
+        const [itemsRes, commAnalyticsRes, creditRes, wastageRes] = await Promise.all([
           getCommunicationItemsAction(shop._id),
           getCommunicationAnalyticsAction({
             shopId: shop._id,
@@ -412,6 +451,12 @@ export function SingleShopView({
             itemCodeFilter: itemFilter,
           }),
           getShopCreditCustomersAction(shop._id, creditSearch),
+          getItemWastageAnalyticsAction({
+            shopId: shop._id,
+            period,
+            startDate: period === "custom" ? startDate : undefined,
+            endDate: period === "custom" ? endDate : undefined,
+          }),
         ]);
 
         if (itemsRes.success) setCommItems(itemsRes.items || []);
@@ -433,6 +478,15 @@ export function SingleShopView({
           if (creditRes.stats) {
             setCreditStats(creditRes.stats);
           }
+        }
+        if (wastageRes?.success) {
+          setWastageAnalytics({
+            totalWastedUnits: wastageRes.totalWastedUnits || 0,
+            totalMonetaryLoss: wastageRes.totalMonetaryLoss || 0,
+            incidentCount: wastageRes.incidentCount || 0,
+            itemBreakdown: wastageRes.itemBreakdown || [],
+            incidents: wastageRes.incidents || [],
+          });
         }
       }
     } catch (err) {
@@ -508,6 +562,22 @@ export function SingleShopView({
   // Item Management Handlers
   const onAddItem = async (data: CreateCommunicationItemInput) => {
     try {
+      const code = (data.itemCode || "").toUpperCase();
+      const name = (data.name || "").toUpperCase();
+      const isTelecomKeyword = ["DIALOG", "MOBITEL", "AIRTEL", "HUTCH"].some(
+        (op) => code.includes(op) || name.includes(op)
+      );
+      if (data.isTelecomReload || isTelecomKeyword) {
+        data.isTelecomReload = true;
+        data.actualPrice = 0;
+        data.sellingPrice = 0;
+        if (!data.telecomOperator || data.telecomOperator === "OTHER") {
+          data.telecomOperator = classifyTelecomOperator(code || name);
+        }
+        if (!data.commissionRate || data.commissionRate <= 0) {
+          data.commissionRate = 4.0;
+        }
+      }
       const res = await createCommunicationItemAction(data);
       if (res.success) {
         toast.create({
@@ -532,6 +602,22 @@ export function SingleShopView({
 
   const onEditItem = async (data: UpdateCommunicationItemInput) => {
     try {
+      const code = (data.itemCode || "").toUpperCase();
+      const name = (data.name || "").toUpperCase();
+      const isTelecomKeyword = ["DIALOG", "MOBITEL", "AIRTEL", "HUTCH"].some(
+        (op) => code.includes(op) || name.includes(op)
+      );
+      if (data.isTelecomReload || isTelecomKeyword) {
+        data.isTelecomReload = true;
+        data.actualPrice = 0;
+        data.sellingPrice = 0;
+        if (!data.telecomOperator || data.telecomOperator === "OTHER") {
+          data.telecomOperator = classifyTelecomOperator(code || name);
+        }
+        if (!data.commissionRate || data.commissionRate <= 0) {
+          data.commissionRate = 4.0;
+        }
+      }
       const res = await updateCommunicationItemAction(data);
       if (res.success) {
         toast.create({
@@ -880,6 +966,124 @@ export function SingleShopView({
     });
   };
 
+  // Registered Products & Services Filtering and Sorting Logic
+  const filteredAndSortedCommItems = React.useMemo(() => {
+    let list = [...commItems];
+
+    if (commItemTypeFilter === "RELOAD") {
+      list = list.filter((it) => it.isTelecomReload);
+    } else if (commItemTypeFilter === "STANDARD") {
+      list = list.filter((it) => !it.isTelecomReload);
+    }
+
+    if (commItemOperatorFilter !== "ALL") {
+      list = list.filter((it) => (it.telecomOperator || classifyTelecomOperator(it.itemCode)) === commItemOperatorFilter);
+    }
+
+    if (commItemStatusFilter === "ACTIVE") {
+      list = list.filter((it) => it.isActive);
+    } else if (commItemStatusFilter === "DISABLED") {
+      list = list.filter((it) => !it.isActive);
+    }
+
+    if (commItemSearch.trim()) {
+      const q = commItemSearch.trim().toLowerCase();
+      list = list.filter(
+        (it) =>
+          it.itemCode?.toLowerCase().includes(q) ||
+          it.name?.toLowerCase().includes(q) ||
+          it.description?.toLowerCase().includes(q) ||
+          it.telecomOperator?.toLowerCase().includes(q)
+      );
+    }
+
+    return list.sort((a, b) => {
+      let cmp = 0;
+      if (commItemSortBy === "name") cmp = (a.name || "").localeCompare(b.name || "");
+      else if (commItemSortBy === "code") cmp = (a.itemCode || "").localeCompare(b.itemCode || "");
+      else if (commItemSortBy === "actualPrice") cmp = (a.actualPrice || 0) - (b.actualPrice || 0);
+      else if (commItemSortBy === "sellingPrice") cmp = (a.sellingPrice || 0) - (b.sellingPrice || 0);
+      else if (commItemSortBy === "margin") {
+        const marginA = a.isTelecomReload ? (a.commissionRate || 0) : ((a.sellingPrice || 0) - (a.actualPrice || 0));
+        const marginB = b.isTelecomReload ? (b.commissionRate || 0) : ((b.sellingPrice || 0) - (b.actualPrice || 0));
+        cmp = marginA - marginB;
+      }
+      return commItemSortOrder === "desc" ? -cmp : cmp;
+    });
+  }, [commItems, commItemSearch, commItemTypeFilter, commItemOperatorFilter, commItemStatusFilter, commItemSortBy, commItemSortOrder]);
+
+  const commItemStats = React.useMemo(() => {
+    let active = 0;
+    let reloads = 0;
+    let standard = 0;
+    for (const it of commItems) {
+      if (it.isActive) active++;
+      if (it.isTelecomReload) reloads++;
+      else standard++;
+    }
+    return {
+      total: commItems.length,
+      active,
+      reloads,
+      standard,
+    };
+  }, [commItems]);
+
+  const handleExportWastageCSV = () => {
+    const headers = [
+      "Date & Time",
+      "Item Code",
+      "Item Name",
+      "Wasted Quantity",
+      "Base Unit Cost (LKR)",
+      "Total Financial Loss (LKR)",
+      "Reason / Defect Description",
+      "Reported By",
+    ];
+
+    const rows = wastageAnalytics.incidents.map((inc) => [
+      `"${new Date(inc.date).toLocaleString()}"`,
+      `"${inc.itemCode || ""}"`,
+      `"${(inc.itemName || "").replace(/"/g, '""')}"`,
+      inc.quantity || 0,
+      inc.unitBasePrice || 0,
+      inc.totalLoss || 0,
+      `"${(inc.reason || "").replace(/"/g, '""')}"`,
+      `"${inc.reportedBy?.name || "Staff"}"`,
+    ]);
+
+    rows.push([
+      `"TOTALS"`,
+      `"All Incidents (${wastageAnalytics.incidents.length})"`,
+      `""`,
+      wastageAnalytics.totalWastedUnits,
+      `""`,
+      wastageAnalytics.totalMonetaryLoss,
+      `""`,
+      `""`,
+    ]);
+
+    const csvContent =
+      "data:text/csv;charset=utf-8," +
+      [headers.join(","), ...rows.map((e) => e.join(","))].join("\n");
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute(
+      "download",
+      `${shop.code || "SHOP"}_Item_Wastage_Report_${period}_${new Date().toISOString().split("T")[0]}.csv`
+    );
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+
+    toast.create({
+      title: "Wastage Export Complete",
+      description: `Downloaded ${wastageAnalytics.incidents.length} wastage incidents in CSV.`,
+      type: "success",
+    });
+  };
+
   // Table Columns for Standard Branch
   const standardColumns: ColumnDef<any>[] = [
     {
@@ -1033,48 +1237,101 @@ export function SingleShopView({
     {
       accessorKey: "itemCode",
       header: "Item Code",
-      cell: ({ row }) => (
-        <span className="font-mono text-xs font-bold uppercase rounded-md bg-muted px-2 py-0.5 border border-border">
-          {row.original.itemCode}
-        </span>
-      ),
+      cell: ({ row }) => {
+        const item = row.original;
+        return (
+          <div className="flex flex-col gap-1 items-start">
+            <span className="font-mono text-xs font-bold uppercase rounded-md bg-muted px-2 py-0.5 border border-border">
+              {item.itemCode}
+            </span>
+            {item.isTelecomReload && (
+              <span className="text-[10px] font-semibold text-primary font-mono">
+                {item.telecomOperator || "RELOAD"}
+              </span>
+            )}
+          </div>
+        );
+      },
     },
     {
       accessorKey: "name",
       header: "Item Name",
-      cell: ({ row }) => (
-        <div className="flex flex-col">
-          <span className="font-semibold text-xs text-foreground">{row.original.name}</span>
-          {row.original.description && (
-            <span className="text-[11px] text-muted-foreground truncate max-w-xs">{row.original.description}</span>
-          )}
-        </div>
-      ),
+      cell: ({ row }) => {
+        const item = row.original;
+        return (
+          <div className="flex flex-col">
+            <div className="flex items-center gap-1.5">
+              <span className="font-semibold text-xs text-foreground">{item.name}</span>
+              {item.isTelecomReload && (
+                <Badge variant="secondary" className="text-[9px] px-1.5 py-0 font-mono">
+                  Reload Top-up
+                </Badge>
+              )}
+            </div>
+            {item.description && (
+              <span className="text-[11px] text-muted-foreground truncate max-w-xs">{item.description}</span>
+            )}
+          </div>
+        );
+      },
     },
     {
       accessorKey: "actualPrice",
       header: "Base Cost (LKR)",
-      cell: ({ row }) => (
-        <span className="font-mono text-xs font-semibold text-muted-foreground">
-          LKR {Number(row.original.actualPrice || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-        </span>
-      ),
+      cell: ({ row }) => {
+        const item = row.original;
+        if (item.isTelecomReload) {
+          return (
+            <span className="text-[11px] text-muted-foreground font-mono">
+              Net (100 - {item.commissionRate ?? 0}%)
+            </span>
+          );
+        }
+        return (
+          <span className="font-mono text-xs font-semibold text-muted-foreground">
+            LKR {Number(item.actualPrice || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+          </span>
+        );
+      },
     },
     {
       accessorKey: "sellingPrice",
       header: "Selling Price (LKR)",
-      cell: ({ row }) => (
-        <span className="font-mono text-xs font-semibold text-foreground">
-          LKR {Number(row.original.sellingPrice || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-        </span>
-      ),
+      cell: ({ row }) => {
+        const item = row.original;
+        if (item.isTelecomReload) {
+          return (
+            <Badge variant="outline" className="font-mono text-[10px] bg-primary/5 text-primary border-primary/30">
+              Dynamic (Custom)
+            </Badge>
+          );
+        }
+        return (
+          <span className="font-mono text-xs font-semibold text-foreground">
+            LKR {Number(item.sellingPrice || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+          </span>
+        );
+      },
     },
     {
       id: "margin",
       header: "Unit Profit Margin",
       cell: ({ row }) => {
-        const cost = Number(row.original.actualPrice || 0);
-        const sell = Number(row.original.sellingPrice || 0);
+        const item = row.original;
+        if (item.isTelecomReload) {
+          return (
+            <div className="flex flex-col">
+              <span className="font-mono text-xs font-bold text-emerald-600 dark:text-emerald-400">
+                +{item.commissionRate ?? 0}% Commission
+              </span>
+              <span className="text-[10px] text-muted-foreground font-mono">
+                Auto-credited profit
+              </span>
+            </div>
+          );
+        }
+        const cost = Number(item.actualPrice || 0);
+        const sell = Number(item.sellingPrice || 0);
         const profit = sell - cost;
         const marginPct = sell > 0 ? ((profit / sell) * 100).toFixed(0) : "0";
         return (
@@ -1117,6 +1374,9 @@ export function SingleShopView({
                   actualPrice: item.actualPrice || 0,
                   sellingPrice: item.sellingPrice || 0,
                   description: item.description || "",
+                  isTelecomReload: Boolean(item.isTelecomReload),
+                  telecomOperator: item.telecomOperator || "DIALOG",
+                  commissionRate: item.commissionRate ?? 4.5,
                   isActive: item.isActive,
                 });
                 setEditItemOpen(true);
@@ -1351,6 +1611,11 @@ export function SingleShopView({
             {isCommunication && (
               <TabsTrigger value="items" className="text-xs">
                 Items & Inventory ({commItems.length})
+              </TabsTrigger>
+            )}
+            {isCommunication && (
+              <TabsTrigger value="wastage" className="text-xs">
+                Wastage & Damage Loss
               </TabsTrigger>
             )}
             {isCommunication && (
@@ -2210,11 +2475,12 @@ export function SingleShopView({
         {/* ITEMS & INVENTORY TAB CONTENT */}
         {isCommunication && (
           <TabsContent value="items" className="space-y-4 mt-0">
-            <div className="flex items-center justify-between">
+            {/* Header & Add Action */}
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <h3 className="text-base font-semibold text-foreground">Registered Products & Services</h3>
                 <p className="text-xs text-muted-foreground">
-                  Manage inventory item codes, wholesale cost prices, and standard selling prices
+                  Manage inventory item codes, wholesale cost prices, reload commission percentages, and standard selling prices
                 </p>
               </div>
 
@@ -2227,24 +2493,444 @@ export function SingleShopView({
                     actualPrice: 0,
                     sellingPrice: 0,
                     description: "",
+                    isTelecomReload: false,
+                    telecomOperator: "DIALOG",
+                    commissionRate: 4.5,
                   });
                   setAddItemOpen(true);
                 }}
                 size="sm"
-                className="gap-1.5 text-xs"
+                className="gap-1.5 text-xs font-semibold"
               >
                 <PlusCircleIcon className="size-3.5" />
                 Add Item
               </Button>
             </div>
 
+            {/* Quick Metrics Bar */}
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant="outline" className="px-2.5 py-1 text-xs font-medium border-border bg-card">
+                <PackageIcon className="size-3.5 mr-1.5 text-primary" />
+                <span>Total: <strong className="font-mono text-foreground">{commItemStats.total}</strong></span>
+              </Badge>
+              <Badge variant="outline" className="px-2.5 py-1 text-xs font-medium border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+                <CheckCircle2Icon className="size-3.5 mr-1.5" />
+                <span>Active: <strong className="font-mono">{commItemStats.active}</strong></span>
+              </Badge>
+              <Badge variant="outline" className="px-2.5 py-1 text-xs font-medium border-blue-500/30 bg-blue-500/10 text-blue-600 dark:text-blue-400">
+                <SmartphoneIcon className="size-3.5 mr-1.5" />
+                <span>Telecom Reloads: <strong className="font-mono">{commItemStats.reloads}</strong></span>
+              </Badge>
+              <Badge variant="outline" className="px-2.5 py-1 text-xs font-medium border-border bg-card text-muted-foreground">
+                <span>Standard: <strong className="font-mono text-foreground">{commItemStats.standard}</strong></span>
+              </Badge>
+            </div>
+
+            {/* Comprehensive Filter & Sort Toolbar */}
+            <div className="flex flex-col gap-3 rounded-xl border border-border bg-card p-3.5 shadow-2xs">
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2.5 items-center">
+                {/* Search */}
+                <div className="lg:col-span-2 relative">
+                  <SearchIcon className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
+                  <Input
+                    placeholder="Search name, code, operator..."
+                    value={commItemSearch}
+                    onChange={(e) => setCommItemSearch(e.target.value)}
+                    className="h-8 pl-8 text-xs font-mono"
+                  />
+                  {commItemSearch && (
+                    <button
+                      type="button"
+                      onClick={() => setCommItemSearch("")}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground text-xs"
+                    >
+                      <XIcon className="size-3" />
+                    </button>
+                  )}
+                </div>
+
+                {/* Item Type Filter */}
+                <div>
+                  <select
+                    value={commItemTypeFilter}
+                    onChange={(e) => setCommItemTypeFilter(e.target.value as any)}
+                    className="w-full h-8 rounded-md border border-border bg-card text-foreground px-2 text-xs font-medium outline-none focus:border-ring"
+                  >
+                    <option value="ALL">All Types</option>
+                    <option value="RELOAD">Telecom Reloads</option>
+                    <option value="STANDARD">Standard Services</option>
+                  </select>
+                </div>
+
+                {/* Operator Filter */}
+                <div>
+                  <select
+                    value={commItemOperatorFilter}
+                    onChange={(e) => setCommItemOperatorFilter(e.target.value as any)}
+                    className="w-full h-8 rounded-md border border-border bg-card text-foreground px-2 text-xs font-medium outline-none focus:border-ring"
+                  >
+                    <option value="ALL">All Operators</option>
+                    <option value="DIALOG">Dialog</option>
+                    <option value="MOBITEL">Mobitel</option>
+                    <option value="AIRTEL">Airtel</option>
+                    <option value="HUTCH">Hutch</option>
+                    <option value="OTHER">Other</option>
+                  </select>
+                </div>
+
+                {/* Status Filter */}
+                <div>
+                  <select
+                    value={commItemStatusFilter}
+                    onChange={(e) => setCommItemStatusFilter(e.target.value as any)}
+                    className="w-full h-8 rounded-md border border-border bg-card text-foreground px-2 text-xs font-medium outline-none focus:border-ring"
+                  >
+                    <option value="ALL">All Status</option>
+                    <option value="ACTIVE">Active Only</option>
+                    <option value="DISABLED">Disabled Only</option>
+                  </select>
+                </div>
+
+                {/* Sort Selector & Toggle */}
+                <div className="flex items-center gap-1">
+                  <select
+                    value={commItemSortBy}
+                    onChange={(e) => setCommItemSortBy(e.target.value as any)}
+                    className="flex-1 h-8 rounded-md border border-border bg-card text-foreground px-2 text-xs font-medium outline-none focus:border-ring"
+                  >
+                    <option value="code">Code</option>
+                    <option value="name">Name</option>
+                    <option value="actualPrice">Base Cost</option>
+                    <option value="sellingPrice">Selling Price</option>
+                    <option value="margin">Margin / Comm %</option>
+                  </select>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon-xs"
+                    onClick={() => setCommItemSortOrder((prev) => (prev === "asc" ? "desc" : "asc"))}
+                    className="h-8 w-8 shrink-0 text-muted-foreground hover:text-foreground"
+                    title={commItemSortOrder === "asc" ? "Sort Ascending (click for Desc)" : "Sort Descending (click for Asc)"}
+                  >
+                    <ArrowUpDownIcon className="size-3.5" />
+                  </Button>
+                </div>
+              </div>
+
+              {/* Active Filter Indicators */}
+              {(commItemSearch || commItemTypeFilter !== "ALL" || commItemOperatorFilter !== "ALL" || commItemStatusFilter !== "ALL") && (
+                <div className="flex items-center justify-between text-xs text-muted-foreground pt-1 border-t border-border/50">
+                  <span>
+                    Showing <strong>{filteredAndSortedCommItems.length}</strong> of {commItems.length} items
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCommItemSearch("");
+                      setCommItemTypeFilter("ALL");
+                      setCommItemOperatorFilter("ALL");
+                      setCommItemStatusFilter("ALL");
+                    }}
+                    className="text-xs text-primary hover:underline font-semibold"
+                  >
+                    Clear Filters
+                  </button>
+                </div>
+              )}
+            </div>
+
             <DataTable
               columns={itemColumns}
-              data={commItems}
+              data={filteredAndSortedCommItems}
               searchKey="name"
-              searchPlaceholder="Search items by name or code..."
+              searchPlaceholder="Filter listed items..."
               loading={loading}
             />
+          </TabsContent>
+        )}
+
+        {/* WASTAGE & LOSS AUDIT TAB */}
+        {isCommunication && (
+          <TabsContent value="wastage" className="space-y-6 mt-0">
+            {/* Header and Actions */}
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h3 className="text-base font-semibold text-foreground flex items-center gap-2">
+                  <AlertOctagonIcon className="size-5 text-rose-600 dark:text-rose-400" />
+                  <span>Item Wastage &amp; Damage Loss Ledger</span>
+                </h3>
+                <p className="text-xs text-muted-foreground">
+                  Track misprinted sheets, damaged inventory, and defective production losses. Losses are computed strictly at wholesale base unit cost.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <Button
+                  onClick={handleExportWastageCSV}
+                  variant="outline"
+                  size="sm"
+                  className="gap-1.5 text-xs font-medium"
+                >
+                  <DownloadIcon className="size-3.5" />
+                  Export Wastage Report (CSV)
+                </Button>
+              </div>
+            </div>
+
+            {/* Timeframe Filter Bar */}
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex items-center gap-1.5 bg-muted p-1 rounded-lg">
+                {(["today", "week", "month", "year", "custom"] as const).map((p) => (
+                  <button
+                    key={p}
+                    type="button"
+                    onClick={() => setPeriod(p)}
+                    className={`px-3 py-1 text-xs font-semibold rounded-md transition-all ${
+                      period === p
+                        ? "bg-card text-foreground shadow-xs"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    {p.charAt(0).toUpperCase() + p.slice(1)}
+                  </button>
+                ))}
+              </div>
+
+              {period === "custom" && (
+                <div className="flex items-center gap-2">
+                  <Input
+                    type="date"
+                    value={startDate}
+                    onChange={(e) => setStartDate(e.target.value)}
+                    className="h-8 text-xs font-mono"
+                  />
+                  <span className="text-xs text-muted-foreground">to</span>
+                  <Input
+                    type="date"
+                    value={endDate}
+                    onChange={(e) => setEndDate(e.target.value)}
+                    className="h-8 text-xs font-mono"
+                  />
+                </div>
+              )}
+            </div>
+
+            {/* Wastage KPI Cards */}
+            <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
+              <Card className="border-rose-500/30 bg-gradient-to-br from-card to-rose-500/5 p-4 shadow-sm">
+                <div className="flex items-start justify-between">
+                  <div className="space-y-1">
+                    <span className="text-xs font-semibold text-rose-700 dark:text-rose-400 uppercase tracking-wider">
+                      Total Financial Loss
+                    </span>
+                    <div className="text-2xl font-bold font-mono text-rose-600 dark:text-rose-400">
+                      LKR {Number(wastageAnalytics.totalMonetaryLoss || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    </div>
+                    <p className="text-[11px] text-muted-foreground">
+                      Base cost value of spoiled materials
+                    </p>
+                  </div>
+                  <div className="p-2 rounded-lg bg-rose-500/15 text-rose-600 dark:text-rose-400">
+                    <AlertOctagonIcon className="size-5" />
+                  </div>
+                </div>
+              </Card>
+
+              <Card className="border-border bg-card p-4 shadow-sm">
+                <div className="flex items-start justify-between">
+                  <div className="space-y-1">
+                    <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                      Total Units Wasted
+                    </span>
+                    <div className="text-2xl font-bold font-mono text-foreground">
+                      {Number(wastageAnalytics.totalWastedUnits || 0).toLocaleString()} <span className="text-xs font-sans font-normal text-muted-foreground">units</span>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground">
+                      Misprints, spoiled sheets, or broken items
+                    </p>
+                  </div>
+                  <div className="p-2 rounded-lg bg-muted text-muted-foreground">
+                    <PackageIcon className="size-5" />
+                  </div>
+                </div>
+              </Card>
+
+              <Card className="border-border bg-card p-4 shadow-sm">
+                <div className="flex items-start justify-between">
+                  <div className="space-y-1">
+                    <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                      Incidents Logged
+                    </span>
+                    <div className="text-2xl font-bold font-mono text-foreground">
+                      {wastageAnalytics.incidentCount} <span className="text-xs font-sans font-normal text-muted-foreground">events</span>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground">
+                      Recorded by branch staff officers
+                    </p>
+                  </div>
+                  <div className="p-2 rounded-lg bg-muted text-muted-foreground">
+                    <ReceiptIcon className="size-5" />
+                  </div>
+                </div>
+              </Card>
+
+              <Card className="border-border bg-card p-4 shadow-sm">
+                <div className="flex items-start justify-between">
+                  <div className="space-y-1">
+                    <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                      Top Loss Cause Item
+                    </span>
+                    <div className="text-sm font-bold truncate max-w-[170px] text-foreground">
+                      {wastageAnalytics.itemBreakdown[0]?.itemName || "None"}
+                    </div>
+                    <p className="text-[11px] text-muted-foreground font-mono">
+                      {wastageAnalytics.itemBreakdown[0]
+                        ? `LKR ${Number(wastageAnalytics.itemBreakdown[0].totalLoss).toLocaleString()} (${wastageAnalytics.itemBreakdown[0].unitsWasted} units)`
+                        : "No wastage recorded in period"}
+                    </p>
+                  </div>
+                  <div className="p-2 rounded-lg bg-amber-500/10 text-amber-600 dark:text-amber-400">
+                    <FlameIcon className="size-5" />
+                  </div>
+                </div>
+              </Card>
+            </div>
+
+            {/* Product Wastage Breakdown Table */}
+            <Card className="border-border shadow-sm">
+              <CardHeader className="p-4 pb-2 border-b border-border">
+                <CardTitle className="text-sm font-semibold text-foreground flex items-center justify-between">
+                  <span>Wastage &amp; Defect Breakdown by Item</span>
+                  <Badge variant="outline" className="text-[11px] font-mono">
+                    {wastageAnalytics.itemBreakdown.length} affected product{wastageAnalytics.itemBreakdown.length !== 1 ? "s" : ""}
+                  </Badge>
+                </CardTitle>
+                <CardDescription className="text-xs">
+                  Summary of spoiled inventory items and their cumulative financial impact
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="p-0">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead className="bg-muted/50 text-muted-foreground uppercase tracking-wider text-[11px] border-b border-border">
+                      <tr>
+                        <th className="py-2.5 px-4 font-semibold text-left">Item Code</th>
+                        <th className="py-2.5 px-4 font-semibold text-left">Product Name</th>
+                        <th className="py-2.5 px-4 font-semibold text-right">Units Spoiled</th>
+                        <th className="py-2.5 px-4 font-semibold text-right">Total Financial Loss (LKR)</th>
+                        <th className="py-2.5 px-4 font-semibold text-right">Share of Loss</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border">
+                      {wastageAnalytics.itemBreakdown.length === 0 ? (
+                        <tr>
+                          <td colSpan={5} className="py-8 text-center text-muted-foreground text-xs">
+                            No item wastage or defect records found for this time period.
+                          </td>
+                        </tr>
+                      ) : (
+                        wastageAnalytics.itemBreakdown.map((item) => {
+                          const sharePct = wastageAnalytics.totalMonetaryLoss > 0
+                            ? ((item.totalLoss / wastageAnalytics.totalMonetaryLoss) * 100).toFixed(1)
+                            : "0";
+                          return (
+                            <tr key={item.itemCode} className="hover:bg-muted/40 transition-colors">
+                              <td className="py-2.5 px-4 font-mono font-bold text-foreground">
+                                <span className="bg-muted px-2 py-0.5 rounded-md border border-border">
+                                  {item.itemCode}
+                                </span>
+                              </td>
+                              <td className="py-2.5 px-4 font-medium text-foreground">
+                                {item.itemName}
+                              </td>
+                              <td className="py-2.5 px-4 text-right font-mono font-semibold text-foreground">
+                                {Number(item.unitsWasted).toLocaleString()}
+                              </td>
+                              <td className="py-2.5 px-4 text-right font-mono font-bold text-rose-600 dark:text-rose-400">
+                                LKR {Number(item.totalLoss).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                              </td>
+                              <td className="py-2.5 px-4 text-right font-mono text-muted-foreground">
+                                <span className="inline-block px-1.5 py-0.5 rounded text-[10px] bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20 font-semibold">
+                                  {sharePct}%
+                                </span>
+                              </td>
+                            </tr>
+                          );
+                        })
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Incidents Audit Table */}
+            <Card className="border-border shadow-sm">
+              <CardHeader className="p-4 pb-2 border-b border-border">
+                <CardTitle className="text-sm font-semibold text-foreground">
+                  Damage &amp; Misprint Incidents Audit Log ({wastageAnalytics.incidents.length})
+                </CardTitle>
+                <CardDescription className="text-xs">
+                  Detailed ledger of all registered damage and misprint occurrences
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="p-0">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead className="bg-muted/50 text-muted-foreground uppercase tracking-wider text-[11px] border-b border-border">
+                      <tr>
+                        <th className="py-2.5 px-4 font-semibold text-left">Date &amp; Time</th>
+                        <th className="py-2.5 px-4 font-semibold text-left">Item Code</th>
+                        <th className="py-2.5 px-4 font-semibold text-left">Item Name</th>
+                        <th className="py-2.5 px-4 font-semibold text-right">Qty</th>
+                        <th className="py-2.5 px-4 font-semibold text-right">Base Unit Cost</th>
+                        <th className="py-2.5 px-4 font-semibold text-right">Calculated Loss</th>
+                        <th className="py-2.5 px-4 font-semibold text-left">Reason / Defect Note</th>
+                        <th className="py-2.5 px-4 font-semibold text-left">Reported By</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border font-mono">
+                      {wastageAnalytics.incidents.length === 0 ? (
+                        <tr>
+                          <td colSpan={8} className="py-8 text-center text-muted-foreground text-xs font-sans">
+                            No wastage incidents recorded for this time range.
+                          </td>
+                        </tr>
+                      ) : (
+                        wastageAnalytics.incidents.map((inc: any) => (
+                          <tr key={inc._id} className="hover:bg-muted/40 transition-colors">
+                            <td className="py-2.5 px-4 text-muted-foreground">
+                              {new Date(inc.date).toLocaleDateString()} {new Date(inc.date).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                            </td>
+                            <td className="py-2.5 px-4 font-bold text-foreground">
+                              {inc.itemCode}
+                            </td>
+                            <td className="py-2.5 px-4 font-sans text-foreground">
+                              {inc.itemName}
+                            </td>
+                            <td className="py-2.5 px-4 text-right font-bold text-foreground">
+                              {inc.quantity}
+                            </td>
+                            <td className="py-2.5 px-4 text-right text-muted-foreground">
+                              LKR {Number(inc.unitBasePrice || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                            </td>
+                            <td className="py-2.5 px-4 text-right font-bold text-rose-600 dark:text-rose-400">
+                              LKR {Number(inc.totalLoss || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                            </td>
+                            <td className="py-2.5 px-4 font-sans text-muted-foreground max-w-[200px] truncate" title={inc.reason}>
+                              {inc.reason}
+                            </td>
+                            <td className="py-2.5 px-4 font-sans text-muted-foreground">
+                              {inc.reportedBy?.name || "Staff"}
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </CardContent>
+            </Card>
           </TabsContent>
         )}
 
@@ -2423,7 +3109,7 @@ export function SingleShopView({
             <div className="space-y-1.5">
               <label className="text-xs font-semibold uppercase text-muted-foreground">Item Code</label>
               <Input
-                placeholder="e.g. A4-COPY, BIND-01, PEN-BL"
+                placeholder="e.g. A4-COPY, BIND-01, RLD-DIALOG"
                 {...createItemForm.register("itemCode")}
                 className="h-9 text-xs font-mono uppercase"
               />
@@ -2435,7 +3121,7 @@ export function SingleShopView({
             <div className="space-y-1.5">
               <label className="text-xs font-semibold uppercase text-muted-foreground">Item Name / Service</label>
               <Input
-                placeholder="e.g. Photocopy A4 Single Side"
+                placeholder="e.g. Photocopy A4 Single Side / Dialog Reload"
                 {...createItemForm.register("name")}
                 className="h-9 text-xs"
               />
@@ -2444,37 +3130,129 @@ export function SingleShopView({
               )}
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold uppercase text-muted-foreground">Unit Cost Price (LKR) *</label>
-                <Input
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  placeholder="0.00"
-                  {...createItemForm.register("actualPrice", { valueAsNumber: true })}
-                  className="h-9 text-xs font-mono font-semibold"
-                />
-                {createItemForm.formState.errors.actualPrice && (
-                  <p className="text-xs text-destructive">{createItemForm.formState.errors.actualPrice.message}</p>
-                )}
+            {/* Telecom Reload Configuration */}
+            <div className="space-y-2">
+              <label className="text-[11px] font-semibold uppercase text-muted-foreground block">
+                Item Classification / Category *
+              </label>
+              <div className="grid grid-cols-2 p-1 bg-muted rounded-xl border border-border">
+                <button
+                  type="button"
+                  onClick={() => createItemForm.setValue("isTelecomReload", false)}
+                  className={`flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
+                    !createItemForm.watch("isTelecomReload")
+                      ? "bg-card text-foreground shadow-xs border border-border"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  <PackageIcon className="size-3.5" />
+                  <span>Standard Product</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    createItemForm.setValue("isTelecomReload", true);
+                    createItemForm.setValue("actualPrice", 0);
+                    createItemForm.setValue("sellingPrice", 0);
+                    if (!createItemForm.watch("telecomOperator")) {
+                      createItemForm.setValue("telecomOperator", "DIALOG");
+                    }
+                    if (!createItemForm.watch("commissionRate")) {
+                      createItemForm.setValue("commissionRate", 4.0);
+                    }
+                  }}
+                  className={`flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
+                    createItemForm.watch("isTelecomReload")
+                      ? "bg-primary text-primary-foreground shadow-xs"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  <SmartphoneIcon className="size-3.5" />
+                  <span>Telecom Reload</span>
+                </button>
               </div>
 
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold uppercase text-muted-foreground">Selling Unit Price (LKR) *</label>
-                <Input
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  placeholder="0.00"
-                  {...createItemForm.register("sellingPrice", { valueAsNumber: true })}
-                  className="h-9 text-xs font-mono font-semibold"
-                />
-                {createItemForm.formState.errors.sellingPrice && (
-                  <p className="text-xs text-destructive">{createItemForm.formState.errors.sellingPrice.message}</p>
-                )}
-              </div>
+              {createItemForm.watch("isTelecomReload") && (
+                <div className="p-3 rounded-lg border border-primary/30 bg-primary/5 space-y-2.5">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <label className="text-[11px] font-semibold uppercase text-muted-foreground">Mobile Provider *</label>
+                      <select
+                        {...createItemForm.register("telecomOperator")}
+                        className="w-full h-8 rounded-md border border-border bg-card text-foreground px-2 text-xs font-medium outline-none focus:border-ring"
+                      >
+                        <option value="DIALOG">Dialog</option>
+                        <option value="MOBITEL">Mobitel</option>
+                        <option value="AIRTEL">Airtel</option>
+                        <option value="HUTCH">Hutch</option>
+                        <option value="OTHER">Other</option>
+                      </select>
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-[11px] font-semibold uppercase text-muted-foreground">Commission Rate (%) *</label>
+                      <Input
+                        type="number"
+                        step="0.1"
+                        min="0"
+                        max="100"
+                        placeholder="4.0"
+                        {...createItemForm.register("commissionRate", { valueAsNumber: true })}
+                        className="h-8 text-xs font-mono font-semibold"
+                      />
+                    </div>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">
+                    Cashiers enter dynamic reload amounts at the POS (e.g. LKR 200). Profit is computed directly from this commission rate.
+                  </p>
+                </div>
+              )}
             </div>
+
+            {!createItemForm.watch("isTelecomReload") ? (
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold uppercase text-muted-foreground">
+                    Unit Cost Price (LKR) *
+                  </label>
+                  <Input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    placeholder="0.00"
+                    {...createItemForm.register("actualPrice", { valueAsNumber: true })}
+                    className="h-9 text-xs font-mono font-semibold"
+                  />
+                  {createItemForm.formState.errors.actualPrice && (
+                    <p className="text-xs text-destructive">{createItemForm.formState.errors.actualPrice.message}</p>
+                  )}
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold uppercase text-muted-foreground">
+                    Selling Unit Price (LKR) *
+                  </label>
+                  <Input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    placeholder="0.00"
+                    {...createItemForm.register("sellingPrice", { valueAsNumber: true })}
+                    className="h-9 text-xs font-mono font-semibold"
+                  />
+                  {createItemForm.formState.errors.sellingPrice && (
+                    <p className="text-xs text-destructive">{createItemForm.formState.errors.sellingPrice.message}</p>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div className="p-3 rounded-lg border border-primary/20 bg-primary/5 text-xs text-muted-foreground flex items-center gap-2">
+                <SmartphoneIcon className="size-4 text-primary shrink-0" />
+                <span>
+                  <strong>No Base or Selling Price Required:</strong> Telecommunication items use variable reload amounts entered by the cashier at the POS. Base cost and profit are automatically derived from the commission rate.
+                </span>
+              </div>
+            )}
 
             <div className="space-y-1.5">
               <label className="text-xs font-semibold uppercase text-muted-foreground">Description (Optional)</label>
@@ -2528,37 +3306,129 @@ export function SingleShopView({
               />
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold uppercase text-muted-foreground">Unit Cost Price (LKR) *</label>
-                <Input
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  placeholder="0.00"
-                  {...editItemForm.register("actualPrice", { valueAsNumber: true })}
-                  className="h-9 text-xs font-mono font-semibold"
-                />
-                {editItemForm.formState.errors.actualPrice && (
-                  <p className="text-xs text-destructive">{editItemForm.formState.errors.actualPrice.message}</p>
-                )}
+            {/* Telecom Reload Configuration */}
+            <div className="space-y-2">
+              <label className="text-[11px] font-semibold uppercase text-muted-foreground block">
+                Item Classification / Category *
+              </label>
+              <div className="grid grid-cols-2 p-1 bg-muted rounded-xl border border-border">
+                <button
+                  type="button"
+                  onClick={() => editItemForm.setValue("isTelecomReload", false)}
+                  className={`flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
+                    !editItemForm.watch("isTelecomReload")
+                      ? "bg-card text-foreground shadow-xs border border-border"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  <PackageIcon className="size-3.5" />
+                  <span>Standard Product</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    editItemForm.setValue("isTelecomReload", true);
+                    editItemForm.setValue("actualPrice", 0);
+                    editItemForm.setValue("sellingPrice", 0);
+                    if (!editItemForm.watch("telecomOperator")) {
+                      editItemForm.setValue("telecomOperator", "DIALOG");
+                    }
+                    if (!editItemForm.watch("commissionRate")) {
+                      editItemForm.setValue("commissionRate", 4.0);
+                    }
+                  }}
+                  className={`flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
+                    editItemForm.watch("isTelecomReload")
+                      ? "bg-primary text-primary-foreground shadow-xs"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  <SmartphoneIcon className="size-3.5" />
+                  <span>Telecom Reload</span>
+                </button>
               </div>
 
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold uppercase text-muted-foreground">Selling Unit Price (LKR) *</label>
-                <Input
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  placeholder="0.00"
-                  {...editItemForm.register("sellingPrice", { valueAsNumber: true })}
-                  className="h-9 text-xs font-mono font-semibold"
-                />
-                {editItemForm.formState.errors.sellingPrice && (
-                  <p className="text-xs text-destructive">{editItemForm.formState.errors.sellingPrice.message}</p>
-                )}
-              </div>
+              {editItemForm.watch("isTelecomReload") && (
+                <div className="p-3 rounded-lg border border-primary/30 bg-primary/5 space-y-2.5">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <label className="text-[11px] font-semibold uppercase text-muted-foreground">Mobile Provider *</label>
+                      <select
+                        {...editItemForm.register("telecomOperator")}
+                        className="w-full h-8 rounded-md border border-border bg-card text-foreground px-2 text-xs font-medium outline-none focus:border-ring"
+                      >
+                        <option value="DIALOG">Dialog</option>
+                        <option value="MOBITEL">Mobitel</option>
+                        <option value="AIRTEL">Airtel</option>
+                        <option value="HUTCH">Hutch</option>
+                        <option value="OTHER">Other</option>
+                      </select>
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-[11px] font-semibold uppercase text-muted-foreground">Commission Rate (%) *</label>
+                      <Input
+                        type="number"
+                        step="0.1"
+                        min="0"
+                        max="100"
+                        placeholder="4.0"
+                        {...editItemForm.register("commissionRate", { valueAsNumber: true })}
+                        className="h-8 text-xs font-mono font-semibold"
+                      />
+                    </div>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">
+                    Cashiers enter dynamic reload amounts at the POS (e.g. LKR 200). Profit is computed directly from this commission rate.
+                  </p>
+                </div>
+              )}
             </div>
+
+            {!editItemForm.watch("isTelecomReload") ? (
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold uppercase text-muted-foreground">
+                    Unit Cost Price (LKR) *
+                  </label>
+                  <Input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    placeholder="0.00"
+                    {...editItemForm.register("actualPrice", { valueAsNumber: true })}
+                    className="h-9 text-xs font-mono font-semibold"
+                  />
+                  {editItemForm.formState.errors.actualPrice && (
+                    <p className="text-xs text-destructive">{editItemForm.formState.errors.actualPrice.message}</p>
+                  )}
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold uppercase text-muted-foreground">
+                    Selling Unit Price (LKR) *
+                  </label>
+                  <Input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    placeholder="0.00"
+                    {...editItemForm.register("sellingPrice", { valueAsNumber: true })}
+                    className="h-9 text-xs font-mono font-semibold"
+                  />
+                  {editItemForm.formState.errors.sellingPrice && (
+                    <p className="text-xs text-destructive">{editItemForm.formState.errors.sellingPrice.message}</p>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div className="p-3 rounded-lg border border-primary/20 bg-primary/5 text-xs text-muted-foreground flex items-center gap-2">
+                <SmartphoneIcon className="size-4 text-primary shrink-0" />
+                <span>
+                  <strong>No Base or Selling Price Required:</strong> Telecommunication items use variable reload amounts entered by the cashier at the POS. Base cost and profit are automatically derived from the commission rate.
+                </span>
+              </div>
+            )}
 
             <div className="space-y-1.5">
               <label className="text-xs font-semibold uppercase text-muted-foreground">Description</label>

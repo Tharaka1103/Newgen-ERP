@@ -9,7 +9,7 @@ interface LogAuditParams {
   actorEmail?: string;
   actorRole?: string;
   action: string;
-  targetType: "FinanceRecord" | "User" | "Shop" | "Category" | "BankAccount" | "PettyCashAccount" | "CommunicationItem" | "CustomerCredit" | "CreditTransaction";
+  targetType: "FinanceRecord" | "User" | "Shop" | "Category" | "BankAccount" | "PettyCashAccount" | "CommunicationItem" | "CustomerCredit" | "CreditTransaction" | "ItemWastage";
   targetId?: string | mongoose.Types.ObjectId | null;
   metadata?: Record<string, unknown>;
   ipAddress?: string;

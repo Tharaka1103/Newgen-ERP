@@ -69,8 +69,11 @@ import {
   UserCheckIcon,
   CreditCardIcon,
   DollarSignIcon,
+  AlertOctagonIcon,
+  SmartphoneIcon,
 } from "lucide-react";
 import { toast } from "@/components/ui/toast";
+import { recordItemWastageAction } from "@/actions/communication";
 
 interface CommCartItem {
   id: string;
@@ -82,7 +85,12 @@ interface CommCartItem {
   quantity: number;
   totalPrice: number;
   discountPrice: number;
+  additionalCost?: number;
   netAmount: number;
+  isTelecomReload?: boolean;
+  telecomOperator?: "DIALOG" | "MOBITEL" | "AIRTEL" | "HUTCH" | "OTHER" | null;
+  commissionRate?: number;
+  commissionEarned?: number;
 }
 
 interface CategoryOption {
@@ -111,6 +119,46 @@ interface CommunicationItemOption {
   name: string;
   actualPrice?: number;
   sellingPrice?: number;
+  isTelecomReload?: boolean;
+  telecomOperator?: "DIALOG" | "MOBITEL" | "AIRTEL" | "HUTCH" | "OTHER" | null;
+  commissionRate?: number;
+}
+
+export function isTelecomReloadItem(item?: {
+  isTelecomReload?: boolean;
+  telecomOperator?: string | null;
+  itemCode?: string;
+  name?: string;
+} | null): boolean {
+  if (!item) return false;
+  if (item.isTelecomReload === true) return true;
+  if (item.telecomOperator && item.telecomOperator !== "OTHER") return true;
+  const str = `${item.itemCode || ""} ${item.name || ""}`.toUpperCase();
+  return (
+    str.includes("DIALOG") ||
+    str.includes("MOBITEL") ||
+    str.includes("AIRTEL") ||
+    str.includes("HUTCH") ||
+    str.includes("RELOAD") ||
+    str.includes("TOPUP") ||
+    str.includes("TOP-UP")
+  );
+}
+
+export function getTelecomOperator(item?: {
+  telecomOperator?: string | null;
+  itemCode?: string;
+  name?: string;
+} | null): "DIALOG" | "MOBITEL" | "AIRTEL" | "HUTCH" | "OTHER" {
+  if (item?.telecomOperator && item.telecomOperator !== "OTHER") {
+    return item.telecomOperator as any;
+  }
+  const str = `${item?.itemCode || ""} ${item?.name || ""}`.toUpperCase();
+  if (str.includes("DIALOG")) return "DIALOG";
+  if (str.includes("MOBITEL")) return "MOBITEL";
+  if (str.includes("AIRTEL")) return "AIRTEL";
+  if (str.includes("HUTCH")) return "HUTCH";
+  return "OTHER";
 }
 
 interface FinancesViewProps {
@@ -153,12 +201,14 @@ export function FinancesView({
 
   // Communication Shop Specific State
   const isCommShop = userShopType === "COMMUNICATION";
+  const [commEntryMode, setCommEntryMode] = React.useState<"POS" | "STANDARD">("POS");
   const [commItemLookup, setCommItemLookup] = React.useState("");
   const [matchedItem, setMatchedItem] = React.useState<CommunicationItemOption | null>(null);
   const [isUnlistedItem, setIsUnlistedItem] = React.useState(false);
   const [commQuantity, setCommQuantity] = React.useState<number>(1);
   const [commUnitPrice, setCommUnitPrice] = React.useState<number>(0);
   const [commDiscountPrice, setCommDiscountPrice] = React.useState<number>(0);
+  const [commAdditionalCost, setCommAdditionalCost] = React.useState<number>(0);
   const [commCustomItemName, setCommCustomItemName] = React.useState("");
   const [commCustomCostPrice, setCommCustomCostPrice] = React.useState<number>(0);
   const [commIsRelatedToBranch, setCommIsRelatedToBranch] = React.useState(false);
@@ -295,6 +345,98 @@ export function FinancesView({
     }
   };
 
+  // Wastage & Defect Logging State
+  const [wastageOpen, setWastageOpen] = React.useState(false);
+  const [wastageItemLookup, setWastageItemLookup] = React.useState("");
+  const [wastageMatchedItem, setWastageMatchedItem] = React.useState<CommunicationItemOption | null>(null);
+  const [wastageQuantity, setWastageQuantity] = React.useState<number>(1);
+  const [wastageReason, setWastageReason] = React.useState("");
+  const [submittingWastage, setSubmittingWastage] = React.useState(false);
+
+  const handleWastageItemCodeChange = (codeOrName: string) => {
+    setWastageItemLookup(codeOrName);
+    const clean = codeOrName.trim().toUpperCase();
+    const found = communicationItems.find(
+      (it) => it.itemCode.toUpperCase() === clean || it.name.toLowerCase() === codeOrName.trim().toLowerCase()
+    );
+    if (found) {
+      setWastageMatchedItem(found);
+    } else {
+      setWastageMatchedItem(null);
+    }
+  };
+
+  const handleWastageSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!userShopId) return;
+
+    if (!wastageMatchedItem) {
+      toast.create({
+        title: "Item Required",
+        description: "Please search and select a registered item from inventory.",
+        type: "error",
+      });
+      return;
+    }
+
+    if (wastageQuantity <= 0) {
+      toast.create({
+        title: "Invalid Quantity",
+        description: "Wasted/defective quantity must be at least 1.",
+        type: "error",
+      });
+      return;
+    }
+
+    if (!wastageReason.trim()) {
+      toast.create({
+        title: "Reason Required",
+        description: "Please specify the reason for damage/defect (e.g. misprinted 10 tutor sheets).",
+        type: "error",
+      });
+      return;
+    }
+
+    setSubmittingWastage(true);
+    try {
+      const res = await recordItemWastageAction({
+        shopId: userShopId,
+        itemId: wastageMatchedItem._id,
+        quantity: wastageQuantity,
+        reason: wastageReason.trim(),
+        date: new Date().toISOString(),
+      });
+
+      if (res.success) {
+        toast.create({
+          title: "Wastage Logged",
+          description: res.message || `Recorded ${wastageQuantity} units as damage/defect loss.`,
+          type: "success",
+        });
+        setWastageOpen(false);
+        setWastageItemLookup("");
+        setWastageMatchedItem(null);
+        setWastageQuantity(1);
+        setWastageReason("");
+        refreshRecords();
+      } else {
+        toast.create({
+          title: "Failed to Record Wastage",
+          description: res.error || "An error occurred",
+          type: "error",
+        });
+      }
+    } catch {
+      toast.create({
+        title: "Error",
+        description: "Unexpected error occurred while recording wastage.",
+        type: "error",
+      });
+    } finally {
+      setSubmittingWastage(false);
+    }
+  };
+
   // Load "always on this form" setting
   React.useEffect(() => {
     if (typeof window !== "undefined" && isCommShop) {
@@ -308,7 +450,7 @@ export function FinancesView({
 
   // Prevent closing when "always on this form" is active
   const handleCreateOpenChange = (open: boolean) => {
-    if (!open && isCommShop && alwaysOnForm) {
+    if (!open && isCommShop && commEntryMode === "POS" && alwaysOnForm) {
       toast.create({
         title: "Form Locked Open",
         description: "This form is set to stay open. Uncheck 'Always on this form' at the bottom to close.",
@@ -340,6 +482,7 @@ export function FinancesView({
       actualPrice: 0,
       sellingPrice: 0,
       discountPrice: 0,
+      additionalCost: 0,
       isRelatedToBranch: false,
       relatedBranch: null,
       relatedBranchNote: "",
@@ -365,6 +508,7 @@ export function FinancesView({
       actualPrice: 0,
       sellingPrice: 0,
       discountPrice: 0,
+      additionalCost: 0,
       isRelatedToBranch: false,
       relatedBranch: null,
       relatedBranchNote: "",
@@ -405,12 +549,43 @@ export function FinancesView({
     setCommItemLookup(code);
 
     const clean = code.trim().toUpperCase();
-    const found = communicationItems.find((it) => it.itemCode.toUpperCase() === clean);
+    if (!clean) {
+      setMatchedItem(null);
+      return;
+    }
+
+    const found =
+      communicationItems.find(
+        (it) => it.itemCode.toUpperCase() === clean || it.name.toUpperCase() === clean
+      ) ||
+      communicationItems.find(
+        (it) => it.itemCode.toUpperCase().includes(clean) || it.name.toUpperCase().includes(clean)
+      );
 
     if (found) {
-      setMatchedItem(found);
+      const isReload = isTelecomReloadItem(found);
+      const operator = getTelecomOperator(found);
+      const commissionRate = Number(
+        found.commissionRate && found.commissionRate > 0 ? found.commissionRate : 4.0
+      );
+
+      const enriched: CommunicationItemOption = {
+        ...found,
+        isTelecomReload: isReload,
+        telecomOperator: operator,
+        commissionRate: isReload ? commissionRate : (found.commissionRate || 0),
+      };
+
+      setMatchedItem(enriched);
       setIsUnlistedItem(false);
-      setCommUnitPrice(found.sellingPrice || 0);
+      if (isReload) {
+        setCommUnitPrice(0);
+        setCommQuantity(1);
+        setCommDiscountPrice(0);
+        setCommAdditionalCost(0);
+      } else {
+        setCommUnitPrice(found.sellingPrice || 0);
+      }
     } else {
       setMatchedItem(null);
     }
@@ -418,6 +593,7 @@ export function FinancesView({
 
   // Add Item to Multi-Item Cart
   const handleAddItemToCart = () => {
+    const isReload = isTelecomReloadItem(matchedItem);
     const itemName = isUnlistedItem
       ? commCustomItemName.trim()
       : (matchedItem?.name || commItemLookup.trim());
@@ -443,32 +619,59 @@ export function FinancesView({
       return;
     }
 
-    if (commQuantity <= 0) {
-      toast.create({
-        title: "Invalid Quantity",
-        description: "Quantity must be at least 1.",
-        type: "error",
-      });
-      return;
+    // RELOAD VALIDATION
+    if (isReload) {
+      if (!commUnitPrice || commUnitPrice <= 0) {
+        toast.create({
+          title: "Reload Amount Required",
+          description: "Please enter a valid reload amount (e.g. LKR 100, 200, 500).",
+          type: "error",
+        });
+        return;
+      }
+    } else {
+      // STANDARD ITEM VALIDATION
+      if (commQuantity <= 0) {
+        toast.create({
+          title: "Invalid Quantity",
+          description: "Quantity must be at least 1.",
+          type: "error",
+        });
+        return;
+      }
+
+      const effectiveUnitPrice = isUnlistedItem ? commUnitPrice : (matchedItem?.sellingPrice || 0);
+      if (effectiveUnitPrice <= 0) {
+        toast.create({
+          title: "No Selling Price Configured",
+          description: isUnlistedItem
+            ? "Please specify a unit selling price for this custom item."
+            : `Item "${matchedItem?.name || itemCode}" does not have a selling price configured in inventory.`,
+          type: "error",
+        });
+        return;
+      }
     }
 
-    const effectiveUnitPrice = isUnlistedItem ? commUnitPrice : (matchedItem?.sellingPrice || 0);
-
-    if (effectiveUnitPrice <= 0) {
-      toast.create({
-        title: "No Selling Price Configured",
-        description: isUnlistedItem
-          ? "Please specify a unit selling price for this custom item."
-          : `Item "${matchedItem?.name || itemCode}" does not have a selling price configured in inventory.`,
-        type: "error",
-      });
-      return;
-    }
-
-    const calculatedTotal = commQuantity * effectiveUnitPrice;
-    const discount = Math.max(0, commDiscountPrice || 0);
+    const reloadAmount = commUnitPrice;
+    const calculatedTotal = isReload
+      ? reloadAmount
+      : commQuantity * (isUnlistedItem ? commUnitPrice : (matchedItem?.sellingPrice || 0));
+    const discount = isReload ? 0 : Math.max(0, commDiscountPrice || 0);
+    const additionalCost = isReload ? 0 : Math.max(0, commAdditionalCost || 0);
     const net = Math.max(0, calculatedTotal - discount);
-    const actualPrice = 0; // Resolved on server from registered item
+
+    const commissionRate = isReload ? Number(matchedItem?.commissionRate || 4.0) : 0;
+    let commissionEarned = 0;
+    let actualPrice = 0;
+    if (isReload) {
+      commissionEarned = Number(((net * (commissionRate / 100))).toFixed(2));
+      actualPrice = Math.max(0, Number((net - commissionEarned).toFixed(2)));
+    } else {
+      actualPrice = isUnlistedItem ? commCustomCostPrice : (matchedItem?.actualPrice || 0);
+    }
+
+    const operator = isReload ? getTelecomOperator(matchedItem) : null;
 
     const newItem: CommCartItem = {
       id: `${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
@@ -476,11 +679,16 @@ export function FinancesView({
       itemCode,
       itemName,
       actualPrice,
-      sellingPrice: effectiveUnitPrice,
-      quantity: commQuantity,
+      sellingPrice: isReload ? reloadAmount : (isUnlistedItem ? commUnitPrice : (matchedItem?.sellingPrice || 0)),
+      quantity: isReload ? 1 : commQuantity,
       totalPrice: calculatedTotal,
       discountPrice: discount,
+      additionalCost,
       netAmount: net,
+      isTelecomReload: isReload,
+      telecomOperator: operator,
+      commissionRate,
+      commissionEarned: isReload ? commissionEarned : undefined,
     };
 
     setCommCartItems((prev) => [...prev, newItem]);
@@ -494,6 +702,7 @@ export function FinancesView({
     setCommQuantity(1);
     setCommUnitPrice(0);
     setCommDiscountPrice(0);
+    setCommAdditionalCost(0);
   };
 
   const handleRemoveCartItem = (id: string) => {
@@ -524,6 +733,7 @@ export function FinancesView({
 
     // If cart is empty, check if user filled out the current input fields without clicking "Add Item"
     if (finalItems.length === 0) {
+      const isReload = isTelecomReloadItem(matchedItem);
       const itemName = isUnlistedItem
         ? commCustomItemName.trim()
         : (matchedItem?.name || commItemLookup.trim());
@@ -531,24 +741,44 @@ export function FinancesView({
         ? (commItemLookup.trim().toUpperCase() || "CUSTOM")
         : (matchedItem?.itemCode || commItemLookup.trim().toUpperCase());
 
-      const effectiveUnitPrice = isUnlistedItem ? commUnitPrice : (matchedItem?.sellingPrice || 0);
+      const effectiveUnitPrice = isReload
+        ? commUnitPrice
+        : isUnlistedItem
+          ? commUnitPrice
+          : (matchedItem?.sellingPrice || 0);
 
       if (itemName && effectiveUnitPrice > 0) {
-        const calculatedTotal = (commQuantity || 1) * effectiveUnitPrice;
-        const discount = Math.max(0, commDiscountPrice || 0);
+        const calculatedTotal = isReload ? effectiveUnitPrice : (commQuantity || 1) * effectiveUnitPrice;
+        const discount = isReload ? 0 : Math.max(0, commDiscountPrice || 0);
+        const additionalCost = isReload ? 0 : Math.max(0, commAdditionalCost || 0);
         const net = Math.max(0, calculatedTotal - discount);
+
+        const commissionRate = isReload ? Number(matchedItem?.commissionRate || 4.0) : 0;
+        let commissionEarned = 0;
+        let actualPrice = 0;
+        if (isReload) {
+          commissionEarned = Number(((net * (commissionRate / 100))).toFixed(2));
+          actualPrice = Math.max(0, Number((net - commissionEarned).toFixed(2)));
+        } else {
+          actualPrice = isUnlistedItem ? commCustomCostPrice : (matchedItem?.actualPrice || 0);
+        }
 
         finalItems.push({
           id: `${Date.now()}`,
           communicationItem: matchedItem?._id || null,
           itemCode,
           itemName,
-          actualPrice: 0,
+          actualPrice,
           sellingPrice: effectiveUnitPrice,
-          quantity: commQuantity || 1,
+          quantity: isReload ? 1 : (commQuantity || 1),
           totalPrice: calculatedTotal,
           discountPrice: discount,
+          additionalCost,
           netAmount: net,
+          isTelecomReload: isReload,
+          telecomOperator: isReload ? getTelecomOperator(matchedItem) : null,
+          commissionRate,
+          commissionEarned: isReload ? commissionEarned : undefined,
         });
       }
     }
@@ -594,7 +824,11 @@ export function FinancesView({
           sellingPrice: it.sellingPrice,
           totalPrice: it.totalPrice,
           discountPrice: it.discountPrice,
+          additionalCost: it.additionalCost || 0,
           amount: it.netAmount,
+          isTelecomReload: it.isTelecomReload,
+          telecomOperator: it.telecomOperator,
+          commissionRate: it.commissionRate,
         })),
         paymentMethod: commPaymentMethod,
         customerName: commPaymentMethod === "CREDIT" ? commCustomerName.trim() : undefined,
@@ -624,6 +858,7 @@ export function FinancesView({
         setCommQuantity(1);
         setCommUnitPrice(0);
         setCommDiscountPrice(0);
+        setCommAdditionalCost(0);
         setCommIsRelatedToBranch(false);
         setCommRelatedBranch(null);
         setCommRelatedBranchNote("");
@@ -652,8 +887,40 @@ export function FinancesView({
     }
   };
 
+  const initializeStandardForm = async () => {
+    const defaultCategory = categories[0];
+    createForm.reset({
+      date: new Date().toISOString().split("T")[0],
+      shop: userShopId || "",
+      category: defaultCategory?._id || "",
+      paymentMethod: "CASH",
+      bankAccount: null,
+      billNumber: "Generating...",
+      reason: "",
+      amount: 0,
+      type: defaultCategory?.type || "EXPENSE",
+      isCommunicationItem: false,
+      itemCode: "",
+      itemName: "",
+      quantity: 1,
+      actualPrice: 0,
+      sellingPrice: 0,
+      discountPrice: 0,
+      isRelatedToBranch: false,
+      relatedBranch: null,
+      relatedBranchNote: "",
+      isCrossBranchPayment: false,
+      beneficiaryShop: null,
+    });
+
+    const billRes = await getSuggestedBillNumberAction();
+    if (billRes.success && billRes.billNumber) {
+      createForm.setValue("billNumber", billRes.billNumber);
+    }
+  };
+
   // Open Create Dialog
-  const handleOpenCreate = async () => {
+  const handleOpenCreate = async (mode: "POS" | "STANDARD" = "POS") => {
     if (!userShopId) {
       toast.create({
         title: "No branch assigned",
@@ -672,42 +939,22 @@ export function FinancesView({
     setCommQuantity(1);
     setCommUnitPrice(0);
     setCommDiscountPrice(0);
+    setCommAdditionalCost(0);
     setCommIsRelatedToBranch(false);
     setCommRelatedBranch(null);
     setCommRelatedBranchNote("");
     setCommCartItems([]);
 
-    setCreateOpen(true);
-
-    if (!isCommShop) {
-      const defaultCategory = categories[0];
-      createForm.reset({
-        date: new Date().toISOString().split("T")[0],
-        shop: userShopId,
-        category: defaultCategory?._id || "",
-        paymentMethod: "CASH",
-        bankAccount: null,
-        billNumber: "Generating...",
-        reason: "",
-        amount: 0,
-        type: defaultCategory?.type || "EXPENSE",
-        isCommunicationItem: false,
-        itemCode: "",
-        itemName: "",
-        quantity: 1,
-        actualPrice: 0,
-        sellingPrice: 0,
-        discountPrice: 0,
-        isRelatedToBranch: false,
-        relatedBranch: null,
-        relatedBranchNote: "",
-      });
-
-      const billRes = await getSuggestedBillNumberAction();
-      if (billRes.success && billRes.billNumber) {
-        createForm.setValue("billNumber", billRes.billNumber);
+    if (isCommShop) {
+      setCommEntryMode(mode);
+      if (mode === "STANDARD") {
+        await initializeStandardForm();
       }
+    } else {
+      await initializeStandardForm();
     }
+
+    setCreateOpen(true);
   };
 
   const onCreateSubmit = async (data: CreateFinanceRecordInput) => {
@@ -718,9 +965,7 @@ export function FinancesView({
         description: "Transaction registered and queued for verification.",
         type: "success",
       });
-      if (!alwaysOnForm) {
-        setCreateOpen(false);
-      }
+      setCreateOpen(false);
       createForm.reset();
       refreshRecords();
     } else {
@@ -772,6 +1017,7 @@ export function FinancesView({
       sellingPrice: sellPrice,
       actualPrice: rec.actualPrice || 0,
       discountPrice: rec.discountPrice || 0,
+      additionalCost: rec.additionalCost || 0,
       isRelatedToBranch: Boolean(rec.isRelatedToBranch),
       relatedBranch: rec.relatedBranch?._id || rec.relatedBranch || null,
       relatedBranchNote: rec.relatedBranchNote || "",
@@ -924,11 +1170,10 @@ export function FinancesView({
                   Cross-Branch: For {r.beneficiaryShop?.name || r.relatedBranch?.name}
                 </span>
                 {r.interBranchSettlementStatus && (
-                  <span className={`inline-flex text-[8px] font-mono px-1 py-0.5 rounded border ${
-                    r.interBranchSettlementStatus === "SETTLED"
+                  <span className={`inline-flex text-[8px] font-mono px-1 py-0.5 rounded border ${r.interBranchSettlementStatus === "SETTLED"
                       ? "text-emerald-700 dark:text-emerald-300 bg-emerald-500/10 border-emerald-500/20"
                       : "text-amber-700 dark:text-amber-300 bg-amber-500/10 border-amber-500/20"
-                  }`}>
+                    }`}>
                     {r.interBranchSettlementStatus === "SETTLED" ? "Settled" : "Unsettled"}
                   </span>
                 )}
@@ -1080,15 +1325,59 @@ export function FinancesView({
             </Button>
           )}
 
-          <Button
-            onClick={handleOpenCreate}
-            disabled={unassignedStaff || !userShopId}
-            size="sm"
-            className="gap-1.5 text-xs font-semibold"
-          >
-            <PlusCircleIcon className="size-3.5" />
-            Add New Record
-          </Button>
+          {isCommShop && (
+            <Button
+              onClick={() => {
+                setWastageItemLookup("");
+                setWastageMatchedItem(null);
+                setWastageQuantity(1);
+                setWastageReason("");
+                setWastageOpen(true);
+              }}
+              disabled={unassignedStaff || !userShopId}
+              variant="outline"
+              size="sm"
+              className="gap-1.5 text-xs font-semibold border-rose-500/40 text-rose-700 dark:text-rose-400 hover:bg-rose-500/10"
+            >
+              <AlertOctagonIcon className="size-3.5" />
+              Record Wastage / Damage
+            </Button>
+          )}
+
+          {isCommShop ? (
+            <>
+              <Button
+                onClick={() => handleOpenCreate("STANDARD")}
+                disabled={unassignedStaff || !userShopId}
+                variant="outline"
+                size="sm"
+                className="gap-1.5 text-xs font-semibold border-primary/40 text-primary hover:bg-primary/10"
+              >
+                <ReceiptTextIcon className="size-3.5" />
+                Record Transaction
+              </Button>
+
+              <Button
+                onClick={() => handleOpenCreate("POS")}
+                disabled={unassignedStaff || !userShopId}
+                size="sm"
+                className="gap-1.5 text-xs font-semibold"
+              >
+                <PlusCircleIcon className="size-3.5" />
+                New POS Sale
+              </Button>
+            </>
+          ) : (
+            <Button
+              onClick={() => handleOpenCreate("STANDARD")}
+              disabled={unassignedStaff || !userShopId}
+              size="sm"
+              className="gap-1.5 text-xs font-semibold"
+            >
+              <PlusCircleIcon className="size-3.5" />
+              Add New Record
+            </Button>
+          )}
         </div>
       </div>
 
@@ -1133,11 +1422,64 @@ export function FinancesView({
         <DialogContent
           className={
             isCommShop
-              ? "sm:max-w-3xl md:max-w-4xl max-h-[92vh] overflow-y-auto"
-              : "sm:max-w-lg max-h-[90vh] overflow-y-auto"
+              ? "sm:max-w-2xl md:max-w-3xl lg:max-w-4xl max-h-[92vh] overflow-y-auto overflow-x-hidden"
+              : "sm:max-w-lg max-h-[90vh] overflow-y-auto overflow-x-hidden"
           }
         >
-          {isCommShop ? (
+          {/* Mode Switcher for Communication Shops */}
+          {isCommShop && (
+            <div className="pb-3 border-b border-border pr-8 space-y-2">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                <div className="grid grid-cols-2 p-1 bg-muted rounded-xl border border-border w-full sm:w-auto">
+                  <button
+                    type="button"
+                    onClick={() => setCommEntryMode("POS")}
+                    className={`flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg transition-all ${commEntryMode === "POS"
+                        ? "bg-primary text-primary-foreground shadow-xs"
+                        : "text-muted-foreground hover:text-foreground hover:bg-background/40"
+                      }`}
+                  >
+                    <ShoppingCartIcon className="size-3.5 shrink-0" />
+                    <span className="truncate">
+                      <span className="hidden sm:inline">Products &amp; Reloads (POS)</span>
+                      <span className="sm:hidden">POS Sales</span>
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      setCommEntryMode("STANDARD");
+                      await initializeStandardForm();
+                    }}
+                    className={`flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg transition-all ${commEntryMode === "STANDARD"
+                        ? "bg-primary text-primary-foreground shadow-xs"
+                        : "text-muted-foreground hover:text-foreground hover:bg-background/40"
+                      }`}
+                  >
+                    <ReceiptTextIcon className="size-3.5 shrink-0" />
+                    <span className="truncate">
+                      <span className="hidden sm:inline">General Transaction / Branch Payment</span>
+                      <span className="sm:hidden">Branch Payment</span>
+                    </span>
+                  </button>
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  {commEntryMode === "STANDARD" ? (
+                    <Badge variant="outline" className="text-[10px] font-mono text-muted-foreground bg-muted/40">
+                      Standard Branch Form
+                    </Badge>
+                  ) : (
+                    <Badge variant="outline" className="text-[10px] font-mono text-primary border-primary/30 bg-primary/5">
+                      POS Cart Mode
+                    </Badge>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {isCommShop && commEntryMode === "POS" ? (
             /* ========================================================
                COMMUNICATION SHOP POS MULTI-ITEM SALES FORM
                ======================================================== */
@@ -1159,30 +1501,32 @@ export function FinancesView({
                     <SparklesIcon className="size-3.5" />
                     Item Details
                   </span>
-                  <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer select-none">
-                    <input
-                      type="checkbox"
-                      checked={isUnlistedItem}
-                      onChange={(e) => {
-                        setIsUnlistedItem(e.target.checked);
-                        if (e.target.checked) {
-                          setMatchedItem(null);
-                        }
-                      }}
-                      className="size-3.5 rounded border-border"
-                    />
-                    <span>Unlisted / Custom Item</span>
-                  </label>
+                  {!isTelecomReloadItem(matchedItem) && (
+                    <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={isUnlistedItem}
+                        onChange={(e) => {
+                          setIsUnlistedItem(e.target.checked);
+                          if (e.target.checked) {
+                            setMatchedItem(null);
+                          }
+                        }}
+                        className="size-3.5 rounded border-border"
+                      />
+                      <span>Unlisted / Custom Item</span>
+                    </label>
+                  )}
                 </div>
 
                 {!isUnlistedItem ? (
                   <div className="space-y-2">
                     <div className="space-y-1">
                       <label className="text-[11px] font-semibold text-muted-foreground uppercase">
-                        Enter Item Code
+                        Select / Search Item
                       </label>
                       <Input
-                        placeholder="Type item code (e.g. 0010, SIM01, RLD50)..."
+                        placeholder="Type item code or search name (e.g. DIALOG, MOBITEL, 0010)..."
                         value={commItemLookup}
                         onChange={(e) => handleItemCodeChange(e.target.value)}
                         className="h-9 text-xs font-mono font-semibold"
@@ -1191,7 +1535,7 @@ export function FinancesView({
                       <datalist id="comm-items-datalist">
                         {communicationItems.map((item) => (
                           <option key={item._id} value={item.itemCode}>
-                            {item.name} {item.sellingPrice ? `- (Price: LKR ${item.sellingPrice})` : ""}
+                            {item.name} {isTelecomReloadItem(item) ? `[${getTelecomOperator(item)} - ${item.commissionRate ?? 4}% Commission]` : item.sellingPrice ? `- (Price: LKR ${item.sellingPrice})` : ""}
                           </option>
                         ))}
                       </datalist>
@@ -1199,21 +1543,55 @@ export function FinancesView({
 
                     {/* Matched Item Preview Card */}
                     {matchedItem && (
-                      <div className="flex items-center justify-between p-2.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 text-xs">
+                      <div className={`flex items-center justify-between p-2.5 rounded-lg border text-xs ${isTelecomReloadItem(matchedItem)
+                          ? "border-primary/40 bg-primary/10"
+                          : "border-emerald-500/30 bg-emerald-500/10"
+                        }`}>
                         <div className="flex items-center gap-2">
-                          <CheckCircle2Icon className="size-4 text-emerald-600 dark:text-emerald-400" />
+                          {isTelecomReloadItem(matchedItem) ? (
+                            <SmartphoneIcon className="size-4 text-primary" />
+                          ) : (
+                            <CheckCircle2Icon className="size-4 text-emerald-600 dark:text-emerald-400" />
+                          )}
                           <div>
-                            <span className="font-semibold text-foreground">{matchedItem.name}</span>
-                            {matchedItem.sellingPrice !== undefined && matchedItem.sellingPrice > 0 && (
+                            <div className="flex items-center gap-1.5">
+                              <span className="font-semibold text-foreground">{matchedItem.name}</span>
+                              {isTelecomReloadItem(matchedItem) && (
+                                <Badge variant="secondary" className="text-[10px] px-1.5 py-0 font-mono">
+                                  {getTelecomOperator(matchedItem)}
+                                </Badge>
+                              )}
+                            </div>
+                            {isTelecomReloadItem(matchedItem) ? (
+                              <p className="text-[11px] text-muted-foreground">
+                                Mobile Top-up • Commission: <span className="font-semibold text-emerald-600 dark:text-emerald-400 font-mono">{matchedItem.commissionRate ?? 4}%</span>
+                              </p>
+                            ) : matchedItem.sellingPrice !== undefined && matchedItem.sellingPrice > 0 ? (
                               <span className="text-muted-foreground ml-2 font-mono text-[11px]">
                                 (Selling Price: LKR {Number(matchedItem.sellingPrice).toLocaleString(undefined, { minimumFractionDigits: 2 })})
                               </span>
-                            )}
+                            ) : null}
                           </div>
                         </div>
-                        <Badge variant="outline" className="text-[10px] font-mono">
-                          {matchedItem.itemCode}
-                        </Badge>
+                        <div className="flex items-center gap-2">
+                          <Badge variant="outline" className="text-[10px] font-mono">
+                            {matchedItem.itemCode}
+                          </Badge>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon-xs"
+                            onClick={() => {
+                              setMatchedItem(null);
+                              setCommItemLookup("");
+                              setCommUnitPrice(0);
+                            }}
+                            className="h-6 w-6 text-muted-foreground hover:text-foreground"
+                            title="Clear selected item"
+                          >
+                            <Trash2Icon className="size-3" />
+                          </Button>
+                        </div>
                       </div>
                     )}
                   </div>
@@ -1260,64 +1638,142 @@ export function FinancesView({
                   </div>
                 )}
 
-                {/* QUANTITY, DISCOUNT, NET TOTAL */}
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
-                  <div className="space-y-1">
-                    <label className="text-[11px] font-semibold text-muted-foreground uppercase">
-                      Quantity *
-                    </label>
-                    <Input
-                      type="number"
-                      min="1"
-                      step="1"
-                      placeholder="1"
-                      value={commQuantity}
-                      onChange={(e) => setCommQuantity(Math.max(1, parseInt(e.target.value) || 1))}
-                      className="h-9 text-xs font-mono font-semibold"
-                    />
-                  </div>
-
-                  <div className="space-y-1">
-                    <label className="text-[11px] font-semibold text-muted-foreground uppercase">
-                      Discount (LKR)
-                    </label>
-                    <Input
-                      type="number"
-                      min="0"
-                      step="any"
-                      placeholder="0.00"
-                      value={commDiscountPrice || ""}
-                      onChange={(e) => setCommDiscountPrice(Math.max(0, Number(e.target.value) || 0))}
-                      className="h-9 text-xs font-mono"
-                    />
-                  </div>
-
-                  <div className="space-y-1">
-                    <label className="text-[11px] font-semibold text-muted-foreground uppercase flex items-center justify-between">
-                      <span>Net Total (LKR)</span>
-                      {!isUnlistedItem && matchedItem && matchedItem.sellingPrice !== undefined && (
-                        <span className="text-[10px] text-muted-foreground font-mono font-normal">
-                          (@ LKR {Number(matchedItem.sellingPrice).toLocaleString(undefined, { minimumFractionDigits: 2 })}/unit)
+                {/* IF TELECOM RELOAD: ALL OTHER FIELDS HIDDEN, ONLY TOTAL RELOAD PRICE ASKED */}
+                {isTelecomReloadItem(matchedItem) ? (
+                  <div className="space-y-3 pt-2">
+                    <div className="space-y-2 p-3.5 rounded-xl border border-primary/30 bg-primary/5">
+                      <div className="flex items-center justify-between">
+                        <label className="text-xs font-bold text-foreground uppercase flex items-center gap-1.5">
+                          <SmartphoneIcon className="size-4 text-primary" />
+                          <span>Reload Total Price (LKR) *</span>
+                        </label>
+                        <span className="text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 font-mono">
+                          {getTelecomOperator(matchedItem)} Commission: {matchedItem?.commissionRate ?? 4}%
                         </span>
-                      )}
-                    </label>
-                    <div className="h-9 px-3 rounded-md border border-border bg-muted/40 flex items-center font-mono text-xs font-bold text-emerald-600 dark:text-emerald-400">
-                      LKR {Math.max(0, (commQuantity * (isUnlistedItem ? commUnitPrice : (matchedItem?.sellingPrice || 0))) - commDiscountPrice).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      </div>
+
+                      <Input
+                        type="number"
+                        min="1"
+                        step="any"
+                        placeholder="Enter reload amount (e.g. 50, 100, 200, 500, 1000)..."
+                        value={commUnitPrice || ""}
+                        onChange={(e) => setCommUnitPrice(Math.max(0, Number(e.target.value) || 0))}
+                        className="h-10 text-sm font-mono font-bold text-foreground bg-background"
+                        autoFocus
+                      />
+
+                      {/* Quick Presets */}
+                      <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                        <span className="text-[10px] text-muted-foreground uppercase font-semibold mr-1">Quick Presets:</span>
+                        {[50, 100, 150, 200, 350, 500, 1000, 2000].map((amt) => (
+                          <button
+                            key={amt}
+                            type="button"
+                            onClick={() => setCommUnitPrice(amt)}
+                            className={`px-2.5 py-0.5 rounded text-xs font-mono border transition-all ${commUnitPrice === amt
+                                ? "bg-primary text-primary-foreground border-primary font-bold shadow-xs"
+                                : "bg-background border-border text-foreground hover:bg-muted"
+                              }`}
+                          >
+                            LKR {amt}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="flex justify-end pt-1">
+                      <Button
+                        type="button"
+                        onClick={handleAddItemToCart}
+                        size="sm"
+                        disabled={!commUnitPrice || commUnitPrice <= 0}
+                        className="gap-1.5 text-xs font-semibold"
+                      >
+                        <PlusCircleIcon className="size-3.5" />
+                        Add Reload to Sale
+                      </Button>
                     </div>
                   </div>
-                </div>
+                ) : (
+                  /* STANDARD ITEM FIELDS: QUANTITY, DISCOUNT, ADDITIONAL COST */
+                  <div className="space-y-3 pt-1">
+                    <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5">
+                      <div className="space-y-1">
+                        <label className="text-[11px] font-semibold text-muted-foreground uppercase">
+                          Quantity *
+                        </label>
+                        <Input
+                          type="number"
+                          min="1"
+                          step="1"
+                          placeholder="1"
+                          value={commQuantity}
+                          onChange={(e) => setCommQuantity(Math.max(1, parseInt(e.target.value) || 1))}
+                          className="h-9 text-xs font-mono font-semibold"
+                        />
+                      </div>
 
-                <div className="flex justify-end pt-1">
-                  <Button
-                    type="button"
-                    onClick={handleAddItemToCart}
-                    size="sm"
-                    className="gap-1.5 text-xs font-semibold"
-                  >
-                    <PlusCircleIcon className="size-3.5" />
-                    Add Item to Sale
-                  </Button>
-                </div>
+                      <div className="space-y-1">
+                        <label className="text-[11px] font-semibold text-muted-foreground uppercase">
+                          Discount (LKR)
+                        </label>
+                        <Input
+                          type="number"
+                          min="0"
+                          step="any"
+                          placeholder="0.00"
+                          value={commDiscountPrice || ""}
+                          onChange={(e) => setCommDiscountPrice(Math.max(0, Number(e.target.value) || 0))}
+                          className="h-9 text-xs font-mono"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="text-[11px] font-semibold text-muted-foreground uppercase flex items-center justify-between">
+                          <span>Additional Cost</span>
+                          <span className="text-[9px] text-muted-foreground font-normal">(Optional)</span>
+                        </label>
+                        <Input
+                          type="number"
+                          min="0"
+                          step="any"
+                          placeholder="0.00"
+                          value={commAdditionalCost || ""}
+                          onChange={(e) => setCommAdditionalCost(Math.max(0, Number(e.target.value) || 0))}
+                          className="h-9 text-xs font-mono"
+                          title="Extra procurement or material surcharge cost"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="text-[11px] font-semibold text-muted-foreground uppercase flex items-center justify-between">
+                          <span>Customer Due</span>
+                          {!isUnlistedItem && matchedItem && matchedItem.sellingPrice !== undefined && (
+                            <span className="text-[10px] text-muted-foreground font-mono font-normal">
+                              (@ LKR {Number(matchedItem.sellingPrice).toLocaleString()})
+                            </span>
+                          )}
+                        </label>
+                        <div className="h-9 px-3 rounded-md border border-border bg-muted/40 flex items-center font-mono text-xs font-bold text-emerald-600 dark:text-emerald-400">
+                          LKR {Math.max(0, (commQuantity * (isUnlistedItem ? commUnitPrice : (matchedItem?.sellingPrice || 0))) - commDiscountPrice).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex justify-end pt-1">
+                      <Button
+                        type="button"
+                        onClick={handleAddItemToCart}
+                        size="sm"
+                        className="gap-1.5 text-xs font-semibold"
+                      >
+                        <PlusCircleIcon className="size-3.5" />
+                        Add Item to Sale
+                      </Button>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* MULTI-ITEM SALE LIST TABLE */}
@@ -1360,9 +1816,26 @@ export function FinancesView({
                           <tr key={item.id} className="hover:bg-muted/30">
                             <td className="py-2 px-3 text-muted-foreground text-center">{idx + 1}</td>
                             <td className="py-2 px-3 font-sans font-medium text-foreground">
-                              <div>{item.itemName}</div>
-                              <div className="text-[10px] text-muted-foreground font-mono">
+                              <div className="flex items-center gap-1.5">
+                                <span>{item.itemName}</span>
+                                {item.isTelecomReload && (
+                                  <Badge variant="outline" className="text-[9px] px-1.5 py-0 font-mono bg-primary/10 text-primary border-primary/30">
+                                    {item.telecomOperator || "RELOAD"} {item.commissionRate ? `(${item.commissionRate}%)` : ""}
+                                  </Badge>
+                                )}
+                              </div>
+                              <div className="text-[10px] text-muted-foreground font-mono flex items-center gap-2">
                                 <span>{item.itemCode || "ITEM"}</span>
+                                {item.isTelecomReload && item.commissionEarned !== undefined && (
+                                  <span className="text-emerald-600 dark:text-emerald-400 font-semibold">
+                                    • Profit: +LKR {Number(item.commissionEarned).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                  </span>
+                                )}
+                                {item.additionalCost !== undefined && item.additionalCost > 0 && (
+                                  <span className="text-amber-600 dark:text-amber-400 font-semibold">
+                                    • Extra Cost: +LKR {Number(item.additionalCost).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                  </span>
+                                )}
                               </div>
                             </td>
                             <td className="py-2 px-3 text-right">
@@ -1654,7 +2127,7 @@ export function FinancesView({
               </DialogHeader>
 
               <form onSubmit={createForm.handleSubmit(onCreateSubmit)} className="space-y-4 py-2">
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div className="space-y-1.5">
                     <label className="text-xs font-semibold uppercase text-muted-foreground">Date</label>
                     <Input type="date" {...createForm.register("date")} className="h-9 text-xs" />
@@ -1669,7 +2142,7 @@ export function FinancesView({
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div className="space-y-1.5">
                     <label className="text-xs font-semibold uppercase text-muted-foreground">Category</label>
                     <select
@@ -1723,7 +2196,7 @@ export function FinancesView({
                     </div>
                   )}
 
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div className="space-y-1.5">
                     <label className="text-xs font-semibold uppercase text-muted-foreground">Bill Number</label>
                     <Input {...createForm.register("billNumber")} className="h-9 text-xs font-mono" />
@@ -1802,6 +2275,58 @@ export function FinancesView({
                   )}
                 </div>
 
+                {/* Related to Another Branch (Inter-Branch Cost/Transfer) */}
+                {!createForm.watch("isCrossBranchPayment") && (
+                  <div className="p-3 rounded-lg border border-border bg-muted/20 space-y-2">
+                    <label className="text-xs font-semibold text-foreground flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        {...createForm.register("isRelatedToBranch")}
+                        className="rounded border-input text-primary focus:ring-primary size-4"
+                      />
+                      <span>Related to Another Branch (Inter-Branch Cost/Transfer)</span>
+                    </label>
+                    <p className="text-[11px] text-muted-foreground">
+                      Check this if this expense or transaction was incurred for another branch.
+                    </p>
+
+                    {createForm.watch("isRelatedToBranch") && (
+                      <div className="pt-2 border-t border-border space-y-2">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          <div className="space-y-1">
+                            <label className="text-xs font-semibold text-foreground">
+                              Related Branch
+                            </label>
+                            <select
+                              {...createForm.register("relatedBranch")}
+                              className="w-full h-9 rounded-md border border-border bg-card text-foreground px-3 text-xs font-medium outline-none focus:border-ring [color-scheme:light] dark:[color-scheme:dark]"
+                            >
+                              <option value="">Select Related Branch...</option>
+                              {activeShops
+                                .filter((s) => s._id !== userShopId)
+                                .map((s) => (
+                                  <option key={s._id} value={s._id}>
+                                    {s.name} ({s.code})
+                                  </option>
+                                ))}
+                            </select>
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-xs font-semibold text-foreground">
+                              Transfer Note
+                            </label>
+                            <Input
+                              placeholder="Reason / Note..."
+                              {...createForm.register("relatedBranchNote")}
+                              className="h-9 text-xs"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 <DialogFooter className="pt-2">
                   <Button type="button" variant="outline" size="sm" onClick={() => setCreateOpen(false)}>
                     Cancel
@@ -1865,7 +2390,7 @@ export function FinancesView({
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-1">
+                  <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5 pt-1">
                     <div className="space-y-1">
                       <label className="text-[11px] font-semibold text-muted-foreground uppercase">
                         Quantity *
@@ -1901,6 +2426,19 @@ export function FinancesView({
                         step="any"
                         placeholder="0.00"
                         {...editForm.register("discountPrice", { valueAsNumber: true })}
+                        className="h-9 text-xs font-mono"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[11px] font-semibold text-muted-foreground uppercase">
+                        Additional Cost (LKR)
+                      </label>
+                      <Input
+                        type="number"
+                        min="0"
+                        step="any"
+                        placeholder="0.00"
+                        {...editForm.register("additionalCost", { valueAsNumber: true })}
                         className="h-9 text-xs font-mono"
                       />
                     </div>
@@ -2201,8 +2739,8 @@ export function FinancesView({
                       type="button"
                       onClick={() => setRepayMethod("CASH")}
                       className={`flex-1 py-1.5 px-3 rounded-md text-xs font-semibold border transition-all ${repayMethod === "CASH"
-                          ? "bg-primary text-primary-foreground border-primary"
-                          : "border-border text-muted-foreground hover:bg-muted"
+                        ? "bg-primary text-primary-foreground border-primary"
+                        : "border-border text-muted-foreground hover:bg-muted"
                         }`}
                     >
                       Cash
@@ -2211,8 +2749,8 @@ export function FinancesView({
                       type="button"
                       onClick={() => setRepayMethod("BANK_TRANSFER")}
                       className={`flex-1 py-1.5 px-3 rounded-md text-xs font-semibold border transition-all ${repayMethod === "BANK_TRANSFER"
-                          ? "bg-primary text-primary-foreground border-primary"
-                          : "border-border text-muted-foreground hover:bg-muted"
+                        ? "bg-primary text-primary-foreground border-primary"
+                        : "border-border text-muted-foreground hover:bg-muted"
                         }`}
                     >
                       Bank / Online
@@ -2270,6 +2808,104 @@ export function FinancesView({
                   <CheckCircle2Icon className="size-3.5" />
                 )}
                 Collect &amp; Record Repayment
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* ITEM WASTAGE & DEFECT LOGGING MODAL */}
+      <Dialog open={wastageOpen} onOpenChange={setWastageOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-rose-600 dark:text-rose-400">
+              <AlertOctagonIcon className="size-5" />
+              <span>Record Item Wastage / Damage</span>
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+              Log misprinted sheets, damaged stock, or defective inventory. Operational loss is computed strictly using base unit cost price without reducing the cash drawer.
+            </DialogDescription>
+          </DialogHeader>
+
+          <form onSubmit={handleWastageSubmit} className="space-y-4 py-2">
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold uppercase text-muted-foreground">
+                Item Code or Name *
+              </label>
+              <Input
+                placeholder="Search or enter item code (e.g. A4-COPY, SIM-01)..."
+                value={wastageItemLookup}
+                onChange={(e) => handleWastageItemCodeChange(e.target.value)}
+                className="h-9 text-xs font-mono"
+                list="wastage-items-datalist"
+              />
+              <datalist id="wastage-items-datalist">
+                {communicationItems.map((item) => (
+                  <option key={item._id} value={item.itemCode}>
+                    {item.name} ({item.itemCode})
+                  </option>
+                ))}
+              </datalist>
+            </div>
+
+            {/* Matched Item Card */}
+            {wastageMatchedItem && (
+              <div className="p-3 rounded-lg border border-rose-500/30 bg-rose-500/10 text-xs space-y-1">
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold text-foreground">{wastageMatchedItem.name}</span>
+                  <Badge variant="outline" className="font-mono text-[10px]">
+                    {wastageMatchedItem.itemCode}
+                  </Badge>
+                </div>
+                <p className="text-[11px] text-muted-foreground">
+                  Financial loss calculated from registered wholesale base cost (actual cost). Does not deduct from cash till.
+                </p>
+              </div>
+            )}
+
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold uppercase text-muted-foreground">
+                Wasted / Defective Quantity *
+              </label>
+              <Input
+                type="number"
+                min="1"
+                step="1"
+                placeholder="1"
+                value={wastageQuantity}
+                onChange={(e) => setWastageQuantity(Math.max(1, parseInt(e.target.value) || 1))}
+                className="h-9 text-xs font-mono font-semibold"
+              />
+              <p className="text-[11px] text-muted-foreground">
+                e.g. 10 misprinted tutor sheets, 2 damaged covers
+              </p>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold uppercase text-muted-foreground">
+                Reason / Defect Description *
+              </label>
+              <Textarea
+                placeholder="Explain what happened (e.g. Printer jammed during tutor job, misaligned double-side print, ink smudge)..."
+                value={wastageReason}
+                onChange={(e) => setWastageReason(e.target.value)}
+                rows={3}
+                className="text-xs"
+              />
+            </div>
+
+            <DialogFooter className="pt-2">
+              <Button type="button" variant="outline" size="sm" onClick={() => setWastageOpen(false)}>
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                size="sm"
+                disabled={submittingWastage || !wastageMatchedItem || wastageQuantity <= 0 || !wastageReason.trim()}
+                className="gap-1.5 font-semibold bg-rose-600 hover:bg-rose-700 text-white"
+              >
+                {submittingWastage ? <Loader2Icon className="size-3.5 animate-spin" /> : <AlertOctagonIcon className="size-3.5" />}
+                Record Loss
               </Button>
             </DialogFooter>
           </form>

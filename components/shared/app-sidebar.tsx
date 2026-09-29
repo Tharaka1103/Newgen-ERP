@@ -282,7 +282,7 @@ export function AppSidebar({ user }: AppSidebarProps) {
 
         {/* Version Number (positioned above the logout button) */}
         <div className="flex items-center justify-between text-[11px] text-muted-foreground px-1">
-          <span>v1.4.2</span>
+          <span>v1.5.1</span>
           <span className="flex items-center gap-1.5">
             <span className="text-[10px]">Online</span>
             <span className="size-1.5 rounded-full bg-green-400 animate-pulse" />

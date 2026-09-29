@@ -246,7 +246,7 @@ export async function createFinanceRecordAction(formData: unknown) {
     let approvedAmount: number | null = null;
     let isLocked = false;
 
-    if (isCommShop && !isBranchRelated && !isCrossBranch) {
+    if (isCommShop && !isBranchRelated && !isCrossBranch && result.data.isCommunicationItem && result.data.type !== "EXPENSE") {
       recordStatus = "APPROVED";
       approvedAmount = result.data.amount;
       isLocked = true;
@@ -425,6 +425,9 @@ export async function updateFinanceRecordAction(formData: unknown) {
     }
     if (result.data.discountPrice !== undefined) {
       record.discountPrice = Number(result.data.discountPrice || 0);
+    }
+    if (result.data.additionalCost !== undefined) {
+      record.additionalCost = Number(result.data.additionalCost || 0);
     }
     if (result.data.isRelatedToBranch !== undefined) {
       record.isRelatedToBranch = Boolean(result.data.isRelatedToBranch);
@@ -709,7 +712,11 @@ export async function createCommunicationSaleBatchAction(payload: {
     sellingPrice?: number;
     totalPrice: number;
     discountPrice: number;
+    additionalCost?: number;
     amount: number;
+    isTelecomReload?: boolean;
+    telecomOperator?: string | null;
+    commissionRate?: number;
   }>;
   paymentMethod?: "CASH" | "CREDIT" | "BANK_TRANSFER" | "ONLINE";
   customerName?: string;
@@ -847,23 +854,54 @@ export async function createCommunicationSaleBatchAction(payload: {
 
       // Securely resolve base unit cost price from database (protects secret cost from staff)
       let resolvedActualPrice = Number(item.actualPrice || 0);
+      let isTelecomReload = Boolean((item as any).isTelecomReload);
+      let telecomOperator = (item as any).telecomOperator || null;
+      let commissionRate = typeof (item as any).commissionRate === "number" ? (item as any).commissionRate : 0;
+
       if (item.communicationItem) {
-        const commItemDoc = await CommunicationItem.findById(item.communicationItem).select("actualPrice");
-        if (commItemDoc && typeof commItemDoc.actualPrice === "number") {
-          resolvedActualPrice = commItemDoc.actualPrice;
+        const commItemDoc = await CommunicationItem.findById(item.communicationItem).select("actualPrice isTelecomReload telecomOperator commissionRate");
+        if (commItemDoc) {
+          if (typeof commItemDoc.actualPrice === "number") {
+            resolvedActualPrice = commItemDoc.actualPrice;
+          }
+          if (commItemDoc.isTelecomReload) {
+            isTelecomReload = true;
+            telecomOperator = commItemDoc.telecomOperator || telecomOperator;
+            if (typeof commItemDoc.commissionRate === "number") {
+              commissionRate = commItemDoc.commissionRate;
+            }
+          }
         }
       } else if (item.itemCode) {
         const commItemDoc = await CommunicationItem.findOne({
           shop: shop._id,
           itemCode: item.itemCode.trim().toUpperCase(),
-        }).select("actualPrice");
-        if (commItemDoc && typeof commItemDoc.actualPrice === "number") {
-          resolvedActualPrice = commItemDoc.actualPrice;
+        }).select("actualPrice isTelecomReload telecomOperator commissionRate");
+        if (commItemDoc) {
+          if (typeof commItemDoc.actualPrice === "number") {
+            resolvedActualPrice = commItemDoc.actualPrice;
+          }
+          if (commItemDoc.isTelecomReload) {
+            isTelecomReload = true;
+            telecomOperator = commItemDoc.telecomOperator || telecomOperator;
+            if (typeof commItemDoc.commissionRate === "number") {
+              commissionRate = commItemDoc.commissionRate;
+            }
+          }
         }
+      }
+
+      // If it's a telecom reload, compute commission earned and set base wholesale cost
+      let commissionEarned = 0;
+      if (isTelecomReload) {
+        commissionEarned = Number(((netAmount * (commissionRate / 100))).toFixed(2));
+        resolvedActualPrice = Math.max(0, Number((netAmount - commissionEarned).toFixed(2)));
       }
 
       const recordReason = isCredit
         ? `Credit Sale to ${customerCreditDoc.name} (${customerCreditDoc.phone}): ${item.itemName} (${item.quantity} ${item.quantity === 1 ? "unit" : "units"})`
+        : isTelecomReload
+        ? `Telecom Reload: ${item.itemName} (LKR ${netAmount.toLocaleString()})`
         : `Retail Sale: ${item.itemName} (${item.quantity} ${item.quantity === 1 ? "unit" : "units"})`;
 
       await FinanceRecord.create({
@@ -895,6 +933,11 @@ export async function createCommunicationSaleBatchAction(payload: {
         actualPrice: resolvedActualPrice,
         sellingPrice: unitSelling,
         discountPrice: Number(item.discountPrice || 0),
+        additionalCost: Number(item.additionalCost || 0),
+        isTelecomReload: Boolean(isTelecomReload),
+        telecomOperator: isTelecomReload ? telecomOperator : undefined,
+        commissionRate: isTelecomReload ? commissionRate : undefined,
+        commissionEarned: isTelecomReload ? commissionEarned : undefined,
         isRelatedToBranch: isBranchRelated,
         relatedBranch: relatedBranchId,
         relatedBranchNote,

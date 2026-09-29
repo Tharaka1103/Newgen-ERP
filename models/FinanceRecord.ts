@@ -34,6 +34,11 @@ export interface IFinanceRecord extends Document {
   actualPrice?: number;
   sellingPrice?: number;
   discountPrice?: number;
+  additionalCost?: number;
+  isTelecomReload?: boolean;
+  telecomOperator?: string | null;
+  commissionRate?: number;
+  commissionEarned?: number;
   isRelatedToBranch?: boolean;
   relatedBranch?: mongoose.Types.ObjectId | null;
   relatedBranchNote?: string;
@@ -205,6 +210,27 @@ const FinanceRecordSchema = new Schema<IFinanceRecord>(
       default: 0,
     },
     discountPrice: {
+      type: Number,
+      default: 0,
+    },
+    additionalCost: {
+      type: Number,
+      default: 0,
+    },
+    isTelecomReload: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+    telecomOperator: {
+      type: String,
+      default: null,
+    },
+    commissionRate: {
+      type: Number,
+      default: 0,
+    },
+    commissionEarned: {
       type: Number,
       default: 0,
     },

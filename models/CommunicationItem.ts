@@ -8,6 +8,9 @@ export interface ICommunicationItem extends Document {
   actualPrice: number;
   sellingPrice?: number;
   description?: string;
+  isTelecomReload?: boolean;
+  telecomOperator?: "DIALOG" | "MOBITEL" | "AIRTEL" | "HUTCH" | "OTHER" | null;
+  commissionRate?: number; // e.g. 4.5 for 4.5%
   isActive: boolean;
   createdBy?: mongoose.Types.ObjectId | null;
   createdAt: Date;
@@ -38,6 +41,7 @@ const CommunicationItemSchema = new Schema<ICommunicationItem>(
       type: Number,
       required: [true, "Actual cost price is required"],
       min: [0, "Actual price must be non-negative"],
+      default: 0,
     },
     sellingPrice: {
       type: Number,
@@ -47,6 +51,21 @@ const CommunicationItemSchema = new Schema<ICommunicationItem>(
     description: {
       type: String,
       default: "",
+    },
+    isTelecomReload: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+    telecomOperator: {
+      type: String,
+      enum: ["DIALOG", "MOBITEL", "AIRTEL", "HUTCH", "OTHER", null],
+      default: null,
+    },
+    commissionRate: {
+      type: Number,
+      default: 0,
+      min: [0, "Commission rate cannot be negative"],
     },
     isActive: {
       type: Boolean,
