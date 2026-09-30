@@ -16,7 +16,7 @@ import {
   getShopCreditCustomersAction,
   getCustomerCreditStatementAction,
 } from "@/actions/credit";
-import { settleInterBranchCashAction } from "@/actions/finances";
+import { settleInterBranchCashAction, getUtilityBillAnalyticsAction } from "@/actions/finances";
 import { getActiveBankAccountsAction } from "@/actions/bankAccounts";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
@@ -92,6 +92,8 @@ import {
   AlertOctagonIcon,
   PercentIcon,
   FlameIcon,
+  ZapIcon,
+  DropletIcon,
 } from "lucide-react";
 import { toast } from "@/components/ui/toast";
 import { useForm } from "react-hook-form";
@@ -162,7 +164,7 @@ export function SingleShopView({
 }: SingleShopViewProps) {
   const isCommunication = initialShop.shopType === "COMMUNICATION";
 
-  const [activeTab, setActiveTab] = React.useState<"overview" | "itemSales" | "items" | "wastage" | "credits" | "staff">("overview");
+  const [activeTab, setActiveTab] = React.useState<"overview" | "itemSales" | "items" | "utilityBills" | "wastage" | "credits" | "staff">("overview");
   const [period, setPeriod] = React.useState<"today" | "week" | "month" | "year" | "custom">("month");
   const [startDate, setStartDate] = React.useState<string>("");
   const [endDate, setEndDate] = React.useState<string>("");
@@ -258,6 +260,42 @@ export function SingleShopView({
     itemBreakdown: [],
     telecomBreakdown: [],
   });
+
+  // Utility Bill Payments Analytics State
+  const [utilityAnalytics, setUtilityAnalytics] = React.useState<{
+    totalBillsCount: number;
+    totalCollected: number;
+    totalBillAmount: number;
+    totalServiceCharges: number;
+    totalProviderFees: number;
+    totalNetProfit: number;
+    breakdown: {
+      electricity: { count: number; amount: number; profit: number };
+      water: { count: number; amount: number; profit: number };
+      other: { count: number; amount: number; profit: number };
+    };
+    records: any[];
+  }>({
+    totalBillsCount: 0,
+    totalCollected: 0,
+    totalBillAmount: 0,
+    totalServiceCharges: 0,
+    totalProviderFees: 0,
+    totalNetProfit: 0,
+    breakdown: {
+      electricity: { count: 0, amount: 0, profit: 0 },
+      water: { count: 0, amount: 0, profit: 0 },
+      other: { count: 0, amount: 0, profit: 0 },
+    },
+    records: [],
+  });
+  const [utilityPeriod, setUtilityPeriod] = React.useState<"today" | "week" | "month" | "year" | "custom">("month");
+  const [utilityStartDate, setUtilityStartDate] = React.useState("");
+  const [utilityEndDate, setUtilityEndDate] = React.useState("");
+  const [utilityBillTypeFilter, setUtilityBillTypeFilter] = React.useState<"ALL" | "ELECTRICITY" | "WATER" | "OTHER">("ALL");
+  const [utilityStaffFilter, setUtilityStaffFilter] = React.useState<string>("ALL");
+  const [utilitySearchQuery, setUtilitySearchQuery] = React.useState<string>("");
+  const [utilityLoading, setUtilityLoading] = React.useState(false);
 
   // Modals for Communication Items
   const [addItemOpen, setAddItemOpen] = React.useState(false);
@@ -441,7 +479,7 @@ export function SingleShopView({
 
       // If communication, also fetch items, communication analytics & customer credits
       if (isCommunication) {
-        const [itemsRes, commAnalyticsRes, creditRes, wastageRes] = await Promise.all([
+        const [itemsRes, commAnalyticsRes, creditRes, wastageRes, utilityRes] = await Promise.all([
           getCommunicationItemsAction(shop._id),
           getCommunicationAnalyticsAction({
             shopId: shop._id,
@@ -456,6 +494,15 @@ export function SingleShopView({
             period,
             startDate: period === "custom" ? startDate : undefined,
             endDate: period === "custom" ? endDate : undefined,
+          }),
+          getUtilityBillAnalyticsAction({
+            shopId: shop._id,
+            period: utilityPeriod,
+            startDate: utilityPeriod === "custom" ? utilityStartDate : undefined,
+            endDate: utilityPeriod === "custom" ? utilityEndDate : undefined,
+            billTypeFilter: utilityBillTypeFilter,
+            staffFilter: utilityStaffFilter,
+            search: utilitySearchQuery,
           }),
         ]);
 
@@ -488,6 +535,22 @@ export function SingleShopView({
             incidents: wastageRes.incidents || [],
           });
         }
+        if (utilityRes?.success) {
+          setUtilityAnalytics({
+            totalBillsCount: utilityRes.totalBillsCount || 0,
+            totalCollected: utilityRes.totalCollected || 0,
+            totalBillAmount: utilityRes.totalBillAmount || 0,
+            totalServiceCharges: utilityRes.totalServiceCharges || 0,
+            totalProviderFees: utilityRes.totalProviderFees || 0,
+            totalNetProfit: utilityRes.totalNetProfit || 0,
+            breakdown: utilityRes.breakdown || {
+              electricity: { count: 0, amount: 0, profit: 0 },
+              water: { count: 0, amount: 0, profit: 0 },
+              other: { count: 0, amount: 0, profit: 0 },
+            },
+            records: utilityRes.records || [],
+          });
+        }
       }
     } catch (err) {
       console.error("Failed to load shop analytics:", err);
@@ -499,7 +562,129 @@ export function SingleShopView({
     } finally {
       setLoading(false);
     }
-  }, [period, startDate, endDate, itemFilter, shop._id, isCommunication, creditSearch]);
+  }, [
+    period,
+    startDate,
+    endDate,
+    itemFilter,
+    shop._id,
+    isCommunication,
+    creditSearch,
+    utilityPeriod,
+    utilityStartDate,
+    utilityEndDate,
+    utilityBillTypeFilter,
+    utilityStaffFilter,
+    utilitySearchQuery,
+  ]);
+
+  const fetchUtilityData = React.useCallback(async () => {
+    if (!isCommunication) return;
+    setUtilityLoading(true);
+    try {
+      const res = await getUtilityBillAnalyticsAction({
+        shopId: shop._id,
+        period: utilityPeriod,
+        startDate: utilityPeriod === "custom" ? utilityStartDate : undefined,
+        endDate: utilityPeriod === "custom" ? utilityEndDate : undefined,
+        billTypeFilter: utilityBillTypeFilter,
+        staffFilter: utilityStaffFilter,
+        search: utilitySearchQuery,
+      });
+      if (res.success) {
+        setUtilityAnalytics({
+          totalBillsCount: res.totalBillsCount || 0,
+          totalCollected: res.totalCollected || 0,
+          totalBillAmount: res.totalBillAmount || 0,
+          totalServiceCharges: res.totalServiceCharges || 0,
+          totalProviderFees: res.totalProviderFees || 0,
+          totalNetProfit: res.totalNetProfit || 0,
+          breakdown: res.breakdown || {
+            electricity: { count: 0, amount: 0, profit: 0 },
+            water: { count: 0, amount: 0, profit: 0 },
+            other: { count: 0, amount: 0, profit: 0 },
+          },
+          records: res.records || [],
+        });
+      }
+    } finally {
+      setUtilityLoading(false);
+    }
+  }, [
+    isCommunication,
+    shop._id,
+    utilityPeriod,
+    utilityStartDate,
+    utilityEndDate,
+    utilityBillTypeFilter,
+    utilityStaffFilter,
+    utilitySearchQuery,
+  ]);
+
+  React.useEffect(() => {
+    if (isCommunication) {
+      fetchUtilityData();
+    }
+  }, [fetchUtilityData, isCommunication]);
+
+  const handleExportUtilityBillsCSV = () => {
+    if (!utilityAnalytics.records || utilityAnalytics.records.length === 0) {
+      toast.create({
+        title: "No records to export",
+        description: "There are no bill payments recorded for this period.",
+        type: "warning",
+      });
+      return;
+    }
+
+    const headers = [
+      "Date",
+      "Bill Number",
+      "Bill Type",
+      "Account Number",
+      "Customer Name",
+      "Customer Phone",
+      "Bill Amount (LKR)",
+      "Service Charge (LKR)",
+      "Provider Fee (LKR)",
+      "Total Collected (LKR)",
+      "Shop Net Profit (LKR)",
+      "Payment Method",
+      "Processed By",
+      "Status",
+    ];
+
+    const rows = utilityAnalytics.records.map((r) => [
+      `"${new Date(r.date).toLocaleString()}"`,
+      `"${r.billNumber || ""}"`,
+      `"${r.utilityBillType || "UTILITY"}"`,
+      `"${r.utilityAccountNumber || ""}"`,
+      `"${(r.customerName || "").replace(/"/g, '""')}"`,
+      `"${r.customerPhone || ""}"`,
+      Number(r.billAmount || 0).toFixed(2),
+      Number(r.serviceCharge || 0).toFixed(2),
+      Number(r.providerFee || 0).toFixed(2),
+      Number(r.amount || 0).toFixed(2),
+      Number(r.commissionEarned || 0).toFixed(2),
+      `"${r.paymentMethod || "CASH"}"`,
+      `"${(r.createdBy?.name || "Staff").replace(/"/g, '""')}"`,
+      `"${r.status || "APPROVED"}"`,
+    ]);
+
+    const csvContent =
+      "data:text/csv;charset=utf-8," +
+      [headers.join(","), ...rows.map((e) => e.join(","))].join("\n");
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute(
+      "download",
+      `${shop.code}-utility-bills-${utilityPeriod}-${new Date().toISOString().slice(0, 10)}.csv`
+    );
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
 
   const fetchCreditCustomers = React.useCallback(async (searchQuery?: string) => {
     if (!isCommunication) return;
@@ -1665,6 +1850,17 @@ export function SingleShopView({
               </TabsTrigger>
             )}
             {isCommunication && (
+              <TabsTrigger value="utilityBills" className="text-xs flex items-center gap-1.5">
+                <ZapIcon className="size-3.5 text-amber-500" />
+                <span>Bill Payments</span>
+                {utilityAnalytics.totalBillsCount > 0 && (
+                  <Badge variant="secondary" className="text-[10px] px-1 py-0 h-4 ml-0.5">
+                    {utilityAnalytics.totalBillsCount}
+                  </Badge>
+                )}
+              </TabsTrigger>
+            )}
+            {isCommunication && (
               <TabsTrigger value="wastage" className="text-xs">
                 Wastage & Damage Loss
               </TabsTrigger>
@@ -2697,6 +2893,456 @@ export function SingleShopView({
               searchPlaceholder="Filter listed items..."
               loading={loading}
             />
+          </TabsContent>
+        )}
+
+        {/* UTILITY BILL PAYMENTS TAB */}
+        {isCommunication && (
+          <TabsContent value="utilityBills" className="space-y-6 mt-0">
+            {/* Header and Controls */}
+            <div className="flex flex-col gap-4 rounded-xl border border-border bg-card p-4 shadow-xs md:flex-row md:items-center md:justify-between">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <div className="p-1.5 rounded-md bg-amber-500/15 text-amber-600 dark:text-amber-400">
+                    <ZapIcon className="size-4" />
+                  </div>
+                  <h3 className="text-sm font-bold text-foreground">
+                    Utility Bill Payments &amp; Fee Earnings
+                  </h3>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Light Bill (Electricity) &amp; Water Bill payments collected at this branch with fee deductions and net profit tracking.
+                </p>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="flex items-center rounded-full border border-border bg-muted/60 p-1">
+                  {(["today", "week", "month", "year", "custom"] as const).map((p) => (
+                    <Button
+                      key={p}
+                      variant={utilityPeriod === p ? "default" : "ghost"}
+                      size="xs"
+                      onClick={() => setUtilityPeriod(p)}
+                      className={`text-xs capitalize h-7 px-3 ${utilityPeriod === p ? "shadow-xs" : "text-muted-foreground"}`}
+                    >
+                      {p === "today" ? "Today" : p === "week" ? "This Week" : p === "month" ? "This Month" : p === "year" ? "This Year" : "Custom Range"}
+                    </Button>
+                  ))}
+                </div>
+
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={fetchUtilityData}
+                  disabled={utilityLoading}
+                  className="h-8 gap-1.5 text-xs"
+                >
+                  <RefreshCwIcon className={`size-3.5 ${utilityLoading ? "animate-spin" : ""}`} />
+                  <span className="hidden sm:inline">Refresh</span>
+                </Button>
+
+                <Button
+                  variant="default"
+                  size="sm"
+                  onClick={handleExportUtilityBillsCSV}
+                  className="h-8 gap-1.5 text-xs"
+                >
+                  <DownloadIcon className="size-3.5" />
+                  <span>Export CSV</span>
+                </Button>
+              </div>
+            </div>
+
+            {/* Custom Date Range Picker if Selected */}
+            {utilityPeriod === "custom" && (
+              <div className="flex flex-wrap items-center gap-3 rounded-xl border border-border bg-card/60 p-3 shadow-xs">
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <CalendarIcon className="size-3.5 text-primary" />
+                  <span>Custom Date Range:</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Input
+                    type="date"
+                    value={utilityStartDate}
+                    onChange={(e) => setUtilityStartDate(e.target.value)}
+                    className="h-8 text-xs w-36"
+                  />
+                  <span className="text-xs text-muted-foreground">to</span>
+                  <Input
+                    type="date"
+                    value={utilityEndDate}
+                    onChange={(e) => setUtilityEndDate(e.target.value)}
+                    className="h-8 text-xs w-36"
+                  />
+                  <Button
+                    variant="secondary"
+                    size="xs"
+                    onClick={fetchUtilityData}
+                    className="h-8 text-xs font-semibold px-3"
+                  >
+                    Apply Filter
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            {/* KPI Summary Cards */}
+            <div className="grid gap-3 grid-cols-2 sm:grid-cols-2 lg:grid-cols-4">
+              <Card className="border-border bg-card p-4 shadow-sm hover:shadow-md transition-all">
+                <div className="flex items-start justify-between">
+                  <div className="space-y-1">
+                    <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
+                      Total Bill Volume
+                    </span>
+                    <div className="text-xl sm:text-2xl font-bold font-mono text-foreground">
+                      LKR {Number(utilityAnalytics.totalBillAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    </div>
+                    <p className="text-[10px] text-muted-foreground">
+                      Across {utilityAnalytics.totalBillsCount} bill{utilityAnalytics.totalBillsCount !== 1 ? "s" : ""} processed
+                    </p>
+                  </div>
+                  <div className="p-2 rounded-lg bg-primary/10 text-primary">
+                    <ReceiptIcon className="size-4" />
+                  </div>
+                </div>
+              </Card>
+
+              <Card className="border-border bg-card p-4 shadow-sm hover:shadow-md transition-all">
+                <div className="flex items-start justify-between">
+                  <div className="space-y-1">
+                    <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
+                      Customer Collected
+                    </span>
+                    <div className="text-xl sm:text-2xl font-bold font-mono text-chart-2">
+                      LKR {Number(utilityAnalytics.totalCollected || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    </div>
+                    <p className="text-[10px] text-muted-foreground">
+                      Added into physical cash drawer
+                    </p>
+                  </div>
+                  <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+                    <WalletIcon className="size-4" />
+                  </div>
+                </div>
+              </Card>
+
+              <Card className="border-border bg-card p-4 shadow-sm hover:shadow-md transition-all">
+                <div className="flex items-start justify-between">
+                  <div className="space-y-1">
+                    <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
+                      Provider Cost Fees
+                    </span>
+                    <div className="text-xl sm:text-2xl font-bold font-mono text-rose-600 dark:text-rose-400">
+                      LKR {Number(utilityAnalytics.totalProviderFees || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    </div>
+                    <p className="text-[10px] text-muted-foreground">
+                      Rs. 18 / 23 deducted per bill
+                    </p>
+                  </div>
+                  <div className="p-2 rounded-lg bg-rose-500/10 text-rose-600 dark:text-rose-400">
+                    <DollarSignIcon className="size-4" />
+                  </div>
+                </div>
+              </Card>
+
+              <Card className="border-emerald-500/30 bg-gradient-to-br from-card to-emerald-500/5 p-4 shadow-sm hover:shadow-md transition-all">
+                <div className="flex items-start justify-between">
+                  <div className="space-y-1">
+                    <span className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-400 uppercase tracking-wider">
+                      Shop Net Profit
+                    </span>
+                    <div className="text-xl sm:text-2xl font-extrabold font-mono text-emerald-600 dark:text-emerald-400">
+                      +LKR {Number(utilityAnalytics.totalNetProfit || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    </div>
+                    <p className="text-[10px] text-muted-foreground">
+                      Service charges minus cost fees
+                    </p>
+                  </div>
+                  <div className="p-2 rounded-lg bg-emerald-500/15 text-emerald-600 dark:text-emerald-400">
+                    <TrendingUpIcon className="size-4" />
+                  </div>
+                </div>
+              </Card>
+            </div>
+
+            {/* Category Quick Pill Badges */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="flex items-center justify-between p-3 rounded-xl border border-amber-500/30 bg-amber-500/5">
+                <div className="flex items-center gap-2">
+                  <div className="p-1.5 rounded-lg bg-amber-500/20 text-amber-700 dark:text-amber-400">
+                    <ZapIcon className="size-4" />
+                  </div>
+                  <div>
+                    <span className="text-xs font-bold text-foreground block">Light / Electricity</span>
+                    <span className="text-[10px] text-muted-foreground">
+                      {utilityAnalytics.breakdown.electricity.count} bills • LKR {Number(utilityAnalytics.breakdown.electricity.amount).toLocaleString()}
+                    </span>
+                  </div>
+                </div>
+                <div className="text-right">
+                  <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 block font-mono">
+                    +LKR {utilityAnalytics.breakdown.electricity.profit.toFixed(2)}
+                  </span>
+                  <span className="text-[9px] text-muted-foreground">Profit</span>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between p-3 rounded-xl border border-blue-500/30 bg-blue-500/5">
+                <div className="flex items-center gap-2">
+                  <div className="p-1.5 rounded-lg bg-blue-500/20 text-blue-700 dark:text-blue-400">
+                    <DropletIcon className="size-4" />
+                  </div>
+                  <div>
+                    <span className="text-xs font-bold text-foreground block">Water Board (NWSDB)</span>
+                    <span className="text-[10px] text-muted-foreground">
+                      {utilityAnalytics.breakdown.water.count} bills • LKR {Number(utilityAnalytics.breakdown.water.amount).toLocaleString()}
+                    </span>
+                  </div>
+                </div>
+                <div className="text-right">
+                  <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 block font-mono">
+                    +LKR {utilityAnalytics.breakdown.water.profit.toFixed(2)}
+                  </span>
+                  <span className="text-[9px] text-muted-foreground">Profit</span>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between p-3 rounded-xl border border-purple-500/30 bg-purple-500/5">
+                <div className="flex items-center gap-2">
+                  <div className="p-1.5 rounded-lg bg-purple-500/20 text-purple-700 dark:text-purple-400">
+                    <ReceiptIcon className="size-4" />
+                  </div>
+                  <div>
+                    <span className="text-xs font-bold text-foreground block">Other Utility</span>
+                    <span className="text-[10px] text-muted-foreground">
+                      {utilityAnalytics.breakdown.other.count} bills • LKR {Number(utilityAnalytics.breakdown.other.amount).toLocaleString()}
+                    </span>
+                  </div>
+                </div>
+                <div className="text-right">
+                  <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 block font-mono">
+                    +LKR {utilityAnalytics.breakdown.other.profit.toFixed(2)}
+                  </span>
+                  <span className="text-[9px] text-muted-foreground">Profit</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Filter Controls Bar */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-muted/40 p-3 rounded-xl border border-border">
+              <div className="flex flex-wrap items-center gap-2">
+                {/* Bill Type Filter */}
+                <select
+                  value={utilityBillTypeFilter}
+                  onChange={(e: any) => setUtilityBillTypeFilter(e.target.value)}
+                  className="h-8 rounded-md border border-border bg-card px-2.5 text-xs text-foreground font-medium outline-none focus:border-ring"
+                >
+                  <option value="ALL">All Bill Types</option>
+                  <option value="ELECTRICITY">⚡ Light Bills (Electricity)</option>
+                  <option value="WATER">💧 Water Bills (NWSDB)</option>
+                  <option value="OTHER">📋 Other Utility</option>
+                </select>
+
+                {/* Staff Filter */}
+                <select
+                  value={utilityStaffFilter}
+                  onChange={(e) => setUtilityStaffFilter(e.target.value)}
+                  className="h-8 rounded-md border border-border bg-card px-2.5 text-xs text-foreground font-medium outline-none focus:border-ring"
+                >
+                  <option value="ALL">All Officers</option>
+                  {staff.map((s) => (
+                    <option key={s._id} value={s._id}>
+                      {s.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Search */}
+              <div className="relative w-full sm:w-72">
+                <SearchIcon className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
+                <Input
+                  placeholder="Search account, customer, bill #..."
+                  value={utilitySearchQuery}
+                  onChange={(e) => setUtilitySearchQuery(e.target.value)}
+                  className="h-8 pl-8 text-xs"
+                />
+                {utilitySearchQuery && (
+                  <button
+                    onClick={() => setUtilitySearchQuery("")}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  >
+                    <XIcon className="size-3" />
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Utility Bill Payments Table */}
+            <Card className="border-border shadow-xs overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs text-left">
+                  <thead className="bg-muted/50 text-muted-foreground uppercase tracking-wider text-[10px] border-b border-border">
+                    <tr>
+                      <th className="py-3 px-3.5 font-semibold">Date &amp; Time</th>
+                      <th className="py-3 px-3 font-semibold">Bill / Receipt #</th>
+                      <th className="py-3 px-3 font-semibold">Type</th>
+                      <th className="py-3 px-3 font-semibold">Account / Ref #</th>
+                      <th className="py-3 px-3 font-semibold">Customer</th>
+                      <th className="py-3 px-3 font-semibold text-right">Bill Value</th>
+                      <th className="py-3 px-3 font-semibold text-right">Service Fee</th>
+                      <th className="py-3 px-3 font-semibold text-right">Provider Fee</th>
+                      <th className="py-3 px-3 font-semibold text-right">Customer Paid</th>
+                      <th className="py-3 px-3 font-semibold text-right">Profit</th>
+                      <th className="py-3 px-3 font-semibold">Method</th>
+                      <th className="py-3 px-3 font-semibold">Processed By</th>
+                      <th className="py-3 px-3 font-semibold text-center">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    {utilityLoading ? (
+                      <tr>
+                        <td colSpan={13} className="py-12 text-center text-muted-foreground">
+                          <div className="flex flex-col items-center justify-center gap-2">
+                            <Loader2Icon className="size-6 animate-spin text-primary" />
+                            <p className="text-xs">Loading utility bill payments...</p>
+                          </div>
+                        </td>
+                      </tr>
+                    ) : utilityAnalytics.records.length === 0 ? (
+                      <tr>
+                        <td colSpan={13} className="py-12 text-center text-muted-foreground">
+                          <div className="flex flex-col items-center justify-center gap-2">
+                            <ZapIcon className="size-8 opacity-30 text-amber-500" />
+                            <p className="font-semibold text-sm text-foreground">No bill payments recorded</p>
+                            <p className="text-xs max-w-sm text-muted-foreground">
+                              No utility bill transactions matching the selected filters were found for this branch.
+                            </p>
+                          </div>
+                        </td>
+                      </tr>
+                    ) : (
+                      utilityAnalytics.records.map((r: any) => {
+                        const billAmt = Number(r.billAmount || 0);
+                        const sFee = Number(r.serviceCharge || 0);
+                        const pFee = Number(r.providerFee || 0);
+                        const totalPaid = Number(r.amount || 0);
+                        const profit = Number(r.commissionEarned !== undefined ? r.commissionEarned : (sFee - pFee));
+
+                        return (
+                          <tr key={r._id} className="hover:bg-muted/30 transition-colors">
+                            <td className="py-2.5 px-3.5 text-muted-foreground whitespace-nowrap text-[11px]">
+                              {new Date(r.date).toLocaleDateString()}{" "}
+                              <span className="text-[10px] opacity-75">
+                                {new Date(r.date).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                              </span>
+                            </td>
+                            <td className="py-2.5 px-3 font-mono font-bold text-primary whitespace-nowrap">
+                              {r.billNumber}
+                            </td>
+                            <td className="py-2.5 px-3 whitespace-nowrap">
+                              <span
+                                className={`inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full border ${
+                                  r.utilityBillType === "ELECTRICITY"
+                                    ? "bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/30"
+                                    : r.utilityBillType === "WATER"
+                                    ? "bg-blue-500/15 text-blue-700 dark:text-blue-400 border-blue-500/30"
+                                    : "bg-purple-500/15 text-purple-700 dark:text-purple-400 border-purple-500/30"
+                                }`}
+                              >
+                                {r.utilityBillType === "ELECTRICITY" ? (
+                                  <>
+                                    <ZapIcon className="size-3" /> Light Bill
+                                  </>
+                                ) : r.utilityBillType === "WATER" ? (
+                                  <>
+                                    <DropletIcon className="size-3" /> Water Bill
+                                  </>
+                                ) : (
+                                  <>
+                                    <ReceiptIcon className="size-3" /> Utility
+                                  </>
+                                )}
+                              </span>
+                            </td>
+                            <td className="py-2.5 px-3 font-mono font-semibold text-foreground whitespace-nowrap">
+                              <span className="bg-muted px-1.5 py-0.5 rounded border border-border text-[11px]">
+                                {r.utilityAccountNumber || "-"}
+                              </span>
+                            </td>
+                            <td className="py-2.5 px-3">
+                              {r.customerName || r.customerPhone ? (
+                                <div className="space-y-0.5">
+                                  <div className="font-medium text-foreground text-xs">{r.customerName || "Customer"}</div>
+                                  {r.customerPhone && (
+                                    <div className="text-[10px] text-muted-foreground font-mono">{r.customerPhone}</div>
+                                  )}
+                                </div>
+                              ) : (
+                                <span className="text-muted-foreground text-[11px]">-</span>
+                              )}
+                            </td>
+                            <td className="py-2.5 px-3 text-right font-mono font-semibold text-foreground whitespace-nowrap">
+                              LKR {billAmt.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                            </td>
+                            <td className="py-2.5 px-3 text-right font-mono text-primary font-semibold whitespace-nowrap">
+                              +LKR {sFee.toFixed(2)}
+                            </td>
+                            <td className="py-2.5 px-3 text-right font-mono text-rose-600 dark:text-rose-400 whitespace-nowrap">
+                              -LKR {pFee.toFixed(2)}
+                            </td>
+                            <td className="py-2.5 px-3 text-right font-mono font-bold text-foreground whitespace-nowrap">
+                              LKR {totalPaid.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                            </td>
+                            <td className="py-2.5 px-3 text-right whitespace-nowrap">
+                              <span className="inline-flex items-center text-[11px] font-mono font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
+                                +LKR {profit.toFixed(2)}
+                              </span>
+                            </td>
+                            <td className="py-2.5 px-3 whitespace-nowrap">
+                              <Badge variant="outline" className="font-mono text-[9px] uppercase">
+                                {r.paymentMethod || "CASH"}
+                              </Badge>
+                            </td>
+                            <td className="py-2.5 px-3 text-muted-foreground text-[11px] whitespace-nowrap">
+                              {r.createdBy?.name || "Staff"}
+                            </td>
+                            <td className="py-2.5 px-3 text-center whitespace-nowrap">
+                              <StatusBadge status={r.status || "APPROVED"} />
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                  {utilityAnalytics.records.length > 0 && (
+                    <tfoot className="bg-muted/50 border-t-2 border-border font-semibold text-xs">
+                      <tr>
+                        <td colSpan={5} className="py-3 px-3.5 uppercase tracking-wider text-[11px] text-foreground font-bold">
+                          Total ({utilityAnalytics.records.length} Bills)
+                        </td>
+                        <td className="py-3 px-3 text-right font-mono font-bold text-foreground whitespace-nowrap">
+                          LKR {utilityAnalytics.totalBillAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                        </td>
+                        <td className="py-3 px-3 text-right font-mono text-primary font-bold whitespace-nowrap">
+                          +LKR {utilityAnalytics.totalServiceCharges.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                        </td>
+                        <td className="py-3 px-3 text-right font-mono text-rose-600 dark:text-rose-400 font-bold whitespace-nowrap">
+                          -LKR {utilityAnalytics.totalProviderFees.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                        </td>
+                        <td className="py-3 px-3 text-right font-mono font-extrabold text-foreground whitespace-nowrap">
+                          LKR {utilityAnalytics.totalCollected.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                        </td>
+                        <td className="py-3 px-3 text-right font-mono font-extrabold text-emerald-600 dark:text-emerald-400 whitespace-nowrap">
+                          +LKR {utilityAnalytics.totalNetProfit.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                        </td>
+                        <td colSpan={3}></td>
+                      </tr>
+                    </tfoot>
+                  )}
+                </table>
+              </div>
+            </Card>
           </TabsContent>
         )}
 

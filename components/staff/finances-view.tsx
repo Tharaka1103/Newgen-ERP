@@ -8,6 +8,7 @@ import {
   updateFinanceRecordAction,
   deleteFinanceRecordAction,
   getSuggestedBillNumberAction,
+  recordUtilityBillPaymentAction,
 } from "@/actions/finances";
 import {
   searchCreditCustomerAction,
@@ -47,6 +48,7 @@ import {
   updateFinanceRecordSchema,
   CreateFinanceRecordInput,
   UpdateFinanceRecordInput,
+  calculateUtilityBillCharges,
 } from "@/schemas/finance";
 import {
   PlusCircleIcon,
@@ -73,6 +75,9 @@ import {
   SmartphoneIcon,
   ZapIcon,
   PackageIcon,
+  DropletIcon,
+  LightbulbIcon,
+  SlidersHorizontalIcon,
 } from "lucide-react";
 import { toast } from "@/components/ui/toast";
 import { recordItemWastageAction } from "@/actions/communication";
@@ -256,6 +261,136 @@ export function FinancesView({
   const [repayNote, setRepayNote] = React.useState("");
   const [submittingRepay, setSubmittingRepay] = React.useState(false);
   const [searchingCustomer, setSearchingCustomer] = React.useState(false);
+
+  // Utility Bill Payment Modal State (Communication Shop: Light/Water Bills)
+  const [utilityBillOpen, setUtilityBillOpen] = React.useState(false);
+  const [utilityBillType, setUtilityBillType] = React.useState<"ELECTRICITY" | "WATER" | "OTHER">("ELECTRICITY");
+  const [utilityAccountNumber, setUtilityAccountNumber] = React.useState("");
+  const [utilityCustomerName, setUtilityCustomerName] = React.useState("");
+  const [utilityCustomerPhone, setUtilityCustomerPhone] = React.useState("");
+  const [utilityBillAmount, setUtilityBillAmount] = React.useState<number | "">("");
+  const [utilityCustomServiceCharge, setUtilityCustomServiceCharge] = React.useState<number | "">("");
+  const [utilityCustomProviderFee, setUtilityCustomProviderFee] = React.useState<number | "">("");
+  const [utilityIsCustomCharges, setUtilityIsCustomCharges] = React.useState(false);
+  const [utilityPaymentMethod, setUtilityPaymentMethod] = React.useState<"CASH" | "BANK_TRANSFER" | "ONLINE">("CASH");
+  const [utilityBankAccountId, setUtilityBankAccountId] = React.useState<string | null>(null);
+  const [utilityNote, setUtilityNote] = React.useState("");
+  const [submittingUtilityBill, setSubmittingUtilityBill] = React.useState(false);
+
+  // Live charges calculation for utility bill
+  const liveUtilityCharges = React.useMemo(() => {
+    const billAmt = Number(utilityBillAmount) || 0;
+    const standard = calculateUtilityBillCharges(billAmt);
+    const serviceCharge =
+      utilityIsCustomCharges && typeof utilityCustomServiceCharge === "number" && !isNaN(utilityCustomServiceCharge)
+        ? utilityCustomServiceCharge
+        : standard.serviceCharge;
+    const providerFee =
+      utilityIsCustomCharges && typeof utilityCustomProviderFee === "number" && !isNaN(utilityCustomProviderFee)
+        ? utilityCustomProviderFee
+        : standard.providerFee;
+    const totalCustomerPaid = billAmt + serviceCharge;
+    const costToShop = billAmt + providerFee;
+    const profit = serviceCharge - providerFee;
+    return {
+      billAmt,
+      isOver5000: standard.isOver5000,
+      serviceCharge,
+      providerFee,
+      totalCustomerPaid,
+      costToShop,
+      profit,
+    };
+  }, [utilityBillAmount, utilityIsCustomCharges, utilityCustomServiceCharge, utilityCustomProviderFee]);
+
+  const handleUtilityBillSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!userShopId) {
+      toast.create({
+        title: "No branch assigned",
+        description: "Branch assignment is required to process bill payments.",
+        type: "error",
+      });
+      return;
+    }
+
+    if (!utilityAccountNumber.trim()) {
+      toast.create({
+        title: "Account Number Required",
+        description: "Please enter the customer account or reference number.",
+        type: "error",
+      });
+      return;
+    }
+
+    const billAmt = Number(utilityBillAmount);
+    if (!billAmt || billAmt <= 0) {
+      toast.create({
+        title: "Invalid Bill Amount",
+        description: "Please enter a valid bill amount greater than 0.",
+        type: "error",
+      });
+      return;
+    }
+
+    setSubmittingUtilityBill(true);
+    try {
+      const res = await recordUtilityBillPaymentAction({
+        shopId: userShopId,
+        billType: utilityBillType,
+        accountNumber: utilityAccountNumber.trim(),
+        customerName: utilityCustomerName.trim() || undefined,
+        customerPhone: utilityCustomerPhone.trim() || undefined,
+        billAmount: billAmt,
+        serviceCharge:
+          utilityIsCustomCharges && typeof utilityCustomServiceCharge === "number" && !isNaN(utilityCustomServiceCharge)
+            ? utilityCustomServiceCharge
+            : undefined,
+        providerFee:
+          utilityIsCustomCharges && typeof utilityCustomProviderFee === "number" && !isNaN(utilityCustomProviderFee)
+            ? utilityCustomProviderFee
+            : undefined,
+        paymentMethod: utilityPaymentMethod,
+        bankAccountId: utilityPaymentMethod === "BANK_TRANSFER" ? utilityBankAccountId : null,
+        note: utilityNote.trim() || undefined,
+      });
+
+      if (res.success) {
+        toast.create({
+          title: "Bill Payment Recorded",
+          description: res.message,
+          type: "success",
+        });
+
+        // Reset inputs
+        setUtilityAccountNumber("");
+        setUtilityCustomerName("");
+        setUtilityCustomerPhone("");
+        setUtilityBillAmount("");
+        setUtilityCustomServiceCharge("");
+        setUtilityCustomProviderFee("");
+        setUtilityIsCustomCharges(false);
+        setUtilityNote("");
+        setUtilityBillOpen(false);
+
+        await refreshRecords();
+      } else {
+        toast.create({
+          title: "Payment Failed",
+          description: res.error || "Failed to record bill payment.",
+          type: "error",
+        });
+      }
+    } catch {
+      toast.create({
+        title: "Error",
+        description: "Failed to connect to server.",
+        type: "error",
+      });
+    } finally {
+      setSubmittingUtilityBill(false);
+    }
+  };
 
   const handleLookupCustomer = async (phone: string, target: "SALE" | "REPAY") => {
     if (phone.trim().length >= 3) {
@@ -541,6 +676,8 @@ export function FinancesView({
     };
     if (categoryFilter === "COMM") {
       params.isCommunicationItem = true;
+    } else if (categoryFilter === "UTILITY_BILL") {
+      params.isUtilityBill = true;
     } else if (categoryFilter === "GENERAL") {
       params.isCommunicationItem = false;
     } else if (categoryFilter !== "ALL") {
@@ -1260,6 +1397,23 @@ export function FinancesView({
             <p className="text-xs text-muted-foreground truncate" title={r.reason}>
               {r.reason}
             </p>
+            {r.isUtilityBill && (
+              <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
+                <span className={`inline-flex items-center gap-1 text-[9px] font-semibold px-1.5 py-0.5 rounded border ${r.utilityBillType === "ELECTRICITY"
+                    ? "bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/30"
+                    : r.utilityBillType === "WATER"
+                      ? "bg-blue-500/15 text-blue-700 dark:text-blue-400 border-blue-500/30"
+                      : "bg-purple-500/15 text-purple-700 dark:text-purple-400 border-purple-500/30"
+                  }`}>
+                  {r.utilityBillType === "ELECTRICITY" ? "⚡ Light Bill" : r.utilityBillType === "WATER" ? "💧 Water Bill" : "📋 Utility Bill"}
+                </span>
+                {r.utilityAccountNumber && (
+                  <span className="font-mono text-[10px] text-muted-foreground">
+                    Acc: {r.utilityAccountNumber}
+                  </span>
+                )}
+              </div>
+            )}
             {(r.isCrossBranchPayment || (r.isRelatedToBranch && r.relatedBranch)) && (
               <div className="flex items-center gap-1 flex-wrap pt-0.5">
                 <span className="inline-flex text-[9px] font-medium text-blue-700 dark:text-blue-300 bg-blue-500/10 px-1.5 py-0.5 rounded border border-blue-500/20">
@@ -1311,50 +1465,21 @@ export function FinancesView({
     {
       id: "actions",
       header: "Actions",
-      cell: ({ row }) => {
-        const rec = row.original;
-        const isOwner = rec.createdBy?._id === userId || rec.createdBy === userId;
-        const isCommEditable = isCommShop && isOwner && !rec.reviewedBy;
-        const isPending = rec.status === "PENDING" && !rec.isLocked;
-        const canEdit = isPending || isCommEditable;
-
-        if (!canEdit) {
-          return (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <span className="inline-flex items-center text-muted-foreground cursor-not-allowed p-1">
-                    <LockIcon className="size-3.5 opacity-50" />
-                  </span>
-                }
-              />
-              <TooltipContent>
-                <p className="text-xs">Locked: Record is finalized</p>
-              </TooltipContent>
-            </Tooltip>
-          );
-        }
-
+      cell: () => {
         return (
-          <div className="flex items-center gap-1">
-            <Button
-              variant="ghost"
-              size="icon-xs"
-              onClick={() => openEditModal(rec)}
-              title="Edit Pending Record"
-            >
-              <EditIcon className="size-3.5" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon-xs"
-              onClick={() => setDeleteConfirmRecord(rec)}
-              title="Delete Pending Record"
-              className="text-destructive hover:text-destructive"
-            >
-              <Trash2Icon className="size-3.5" />
-            </Button>
-          </div>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <span className="inline-flex items-center gap-1 text-[11px] font-medium text-muted-foreground/80 bg-muted/40 px-2 py-0.5 rounded border border-border/50 select-none cursor-default">
+                  <LockIcon className="size-3 text-muted-foreground/60" />
+                  <span>Locked</span>
+                </span>
+              }
+            />
+            <TooltipContent>
+              <p className="text-xs">Transaction records cannot be edited or deleted by staff. Only administrators have modification access.</p>
+            </TooltipContent>
+          </Tooltip>
         );
       },
     },
@@ -1377,7 +1502,7 @@ export function FinancesView({
       )}
 
       {/* Header and Add Action */}
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h2 className="text-lg font-semibold text-foreground flex items-center gap-2">
             <span>Branch Financial Ledger</span>
@@ -1396,86 +1521,122 @@ export function FinancesView({
           </h2>
           <p className="text-xs text-muted-foreground">
             {isCommShop
-              ? "Record item sales, branch transactions, petty cash expenses, and customer receipts."
+              ? "Record item sales, bill payments, customer debt settlements, and branch expenses."
               : "Log daily petty cash, tuition fees, and operational expenses for your assigned branch."}
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
-          {isCommShop && (
-            <Button
-              onClick={() => {
-                setRepayPhone("");
-                setRepayCustomer(null);
-                setRepayAmount(0);
-                setRepayNote("");
-                setDebtRepayOpen(true);
-              }}
-              disabled={unassignedStaff || !userShopId}
-              variant="outline"
-              size="sm"
-              className="gap-1.5 text-xs font-semibold border-amber-500/40 text-amber-700 dark:text-amber-400 hover:bg-amber-500/10"
-            >
-              <HandCoinsIcon className="size-3.5" />
-              Settle Debt
-            </Button>
-          )}
+        {!isCommShop && (
+          <Button
+            onClick={() => handleOpenCreate("STANDARD")}
+            disabled={unassignedStaff || !userShopId}
+            size="sm"
+            className="gap-1.5 text-xs font-semibold"
+          >
+            <PlusCircleIcon className="size-3.5" />
+            Add New Record
+          </Button>
+        )}
+      </div>
 
-          {isCommShop && (
-            <Button
-              onClick={() => {
-                setWastageItemLookup("");
-                setWastageMatchedItem(null);
-                setWastageQuantity(1);
-                setWastageReason("");
-                setWastageOpen(true);
-              }}
-              disabled={unassignedStaff || !userShopId}
-              variant="outline"
-              size="sm"
-              className="gap-1.5 text-xs font-semibold border-rose-500/40 text-rose-700 dark:text-rose-400 hover:bg-rose-500/10"
-            >
-              <AlertOctagonIcon className="size-3.5" />
-              Record Wastage / Damage
-            </Button>
-          )}
-
-          {isCommShop ? (
-            <>
-              <Button
-                onClick={() => handleOpenCreate("STANDARD")}
-                disabled={unassignedStaff || !userShopId}
-                variant="outline"
-                size="sm"
-                className="gap-1.5 text-xs font-semibold border-primary/40 text-primary hover:bg-primary/10"
-              >
-                <ReceiptTextIcon className="size-3.5" />
-                Record Transaction
-              </Button>
+      {/* Dedicated Quick Action Toolbar for Communication Shops */}
+      {isCommShop && (
+        <div className="rounded-xl border border-border/80 bg-card/60 backdrop-blur-xs p-3 shadow-xs">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+            {/* Counter Sales Group */}
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mr-1 flex items-center gap-1">
+                <ShoppingCartIcon className="size-3.5 text-primary" />
+                Sales:
+              </span>
 
               <Button
                 onClick={() => handleOpenCreate("POS")}
                 disabled={unassignedStaff || !userShopId}
                 size="sm"
-                className="gap-1.5 text-xs font-semibold"
+                className="gap-2 text-xs font-semibold bg-primary hover:bg-primary/90 text-primary-foreground shadow-xs h-9 px-4"
               >
-                <PlusCircleIcon className="size-3.5" />
+                <PlusCircleIcon className="size-4" />
                 New POS Sale
               </Button>
-            </>
-          ) : (
-            <Button
-              onClick={() => handleOpenCreate("STANDARD")}
-              disabled={unassignedStaff || !userShopId}
-              size="sm"
-              className="gap-1.5 text-xs font-semibold"
-            >
-              <PlusCircleIcon className="size-3.5" />
-              Add New Record
-            </Button>
-          )}
+
+              <Button
+                onClick={() => {
+                  setUtilityAccountNumber("");
+                  setUtilityCustomerName("");
+                  setUtilityCustomerPhone("");
+                  setUtilityBillAmount("");
+                  setUtilityCustomServiceCharge("");
+                  setUtilityCustomProviderFee("");
+                  setUtilityIsCustomCharges(false);
+                  setUtilityPaymentMethod("CASH");
+                  setUtilityNote("");
+                  setUtilityBillOpen(true);
+                }}
+                disabled={unassignedStaff || !userShopId}
+                size="sm"
+                className="gap-2 text-xs font-semibold border border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400 hover:bg-amber-500/20 h-9 px-3.5"
+              >
+                <ZapIcon className="size-4 text-amber-500" />
+                Bill Payment
+              </Button>
+            </div>
+
+            {/* Operations Group */}
+            <div className="flex items-center gap-2 flex-wrap pt-2.5 md:pt-0 border-t md:border-t-0 md:border-l md:border-border/60 md:pl-3.5">
+              <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mr-1 flex items-center gap-1">
+                <SlidersHorizontalIcon className="size-3.5 text-muted-foreground" />
+                Operations:
+              </span>
+
+              <Button
+                onClick={() => handleOpenCreate("STANDARD")}
+                disabled={unassignedStaff || !userShopId}
+                variant="outline"
+                size="sm"
+                className="gap-1.5 text-xs font-medium border-border/80 hover:bg-accent/60 h-9"
+              >
+                <ReceiptTextIcon className="size-3.5 text-primary" />
+                Record Transaction
+              </Button>
+
+              <Button
+                onClick={() => {
+                  setRepayPhone("");
+                  setRepayCustomer(null);
+                  setRepayAmount(0);
+                  setRepayNote("");
+                  setDebtRepayOpen(true);
+                }}
+                disabled={unassignedStaff || !userShopId}
+                variant="outline"
+                size="sm"
+                className="gap-1.5 text-xs font-medium border-border/80 hover:bg-accent/60 text-amber-700 dark:text-amber-400 h-9"
+              >
+                <HandCoinsIcon className="size-3.5 text-amber-500" />
+                Settle Debt
+              </Button>
+
+              <Button
+                onClick={() => {
+                  setWastageItemLookup("");
+                  setWastageMatchedItem(null);
+                  setWastageQuantity(1);
+                  setWastageReason("");
+                  setWastageOpen(true);
+                }}
+                disabled={unassignedStaff || !userShopId}
+                variant="outline"
+                size="sm"
+                className="gap-1.5 text-xs font-medium border-border/80 hover:bg-accent/60 text-rose-700 dark:text-rose-400 h-9"
+              >
+                <AlertOctagonIcon className="size-3.5 text-rose-500" />
+                Wastage / Damage
+              </Button>
+            </div>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Filter Bar */}
       <div className="flex flex-wrap items-center gap-2">
@@ -1497,7 +1658,10 @@ export function FinancesView({
         >
           <option value="ALL" className="bg-white text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100">All Records</option>
           {isCommShop && (
-            <option value="COMM" className="bg-white text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100">📱 Communication Sales</option>
+            <>
+              <option value="COMM" className="bg-white text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100">📱 Communication Sales</option>
+              <option value="UTILITY_BILL" className="bg-white text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100">⚡ Utility Bill Payments</option>
+            </>
           )}
           <option value="GENERAL" className="bg-white text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100">📋 General Transactions</option>
           {categories.map((c) => (
@@ -1749,8 +1913,8 @@ export function FinancesView({
                           setCommTelecomType("CUSTOM");
                         }}
                         className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 text-xs font-semibold rounded-md transition-all ${commTelecomType === "CUSTOM"
-                            ? "bg-primary text-primary-foreground shadow-xs"
-                            : "text-muted-foreground hover:text-foreground"
+                          ? "bg-primary text-primary-foreground shadow-xs"
+                          : "text-muted-foreground hover:text-foreground"
                           }`}
                       >
                         <ZapIcon className="size-3.5" />
@@ -1768,8 +1932,8 @@ export function FinancesView({
                           }
                         }}
                         className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 text-xs font-semibold rounded-md transition-all ${commTelecomType === "PACKAGE"
-                            ? "bg-primary text-primary-foreground shadow-xs"
-                            : "text-muted-foreground hover:text-foreground"
+                          ? "bg-primary text-primary-foreground shadow-xs"
+                          : "text-muted-foreground hover:text-foreground"
                           }`}
                       >
                         <PackageIcon className="size-3.5" />
@@ -1810,8 +1974,8 @@ export function FinancesView({
                               type="button"
                               onClick={() => setCommUnitPrice(amt)}
                               className={`px-2.5 py-0.5 rounded text-xs font-mono border transition-all ${commUnitPrice === amt
-                                  ? "bg-primary text-primary-foreground border-primary font-bold shadow-xs"
-                                  : "bg-background border-border text-foreground hover:bg-muted"
+                                ? "bg-primary text-primary-foreground border-primary font-bold shadow-xs"
+                                : "bg-background border-border text-foreground hover:bg-muted"
                                 }`}
                             >
                               LKR {amt}
@@ -1898,8 +2062,8 @@ export function FinancesView({
                                 setCommUnitPrice(pkg.sell);
                               }}
                               className={`px-2 py-0.5 rounded text-[11px] font-mono border transition-all ${commPackageBasePrice === pkg.base && commUnitPrice === pkg.sell
-                                  ? "bg-primary text-primary-foreground border-primary font-bold shadow-xs"
-                                  : "bg-background border-border text-foreground hover:bg-muted"
+                                ? "bg-primary text-primary-foreground border-primary font-bold shadow-xs"
+                                : "bg-background border-border text-foreground hover:bg-muted"
                                 }`}
                             >
                               {pkg.name}
@@ -3087,6 +3251,273 @@ export function FinancesView({
               >
                 {submittingWastage ? <Loader2Icon className="size-3.5 animate-spin" /> : <AlertOctagonIcon className="size-3.5" />}
                 Record Loss
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* UTILITY BILL PAYMENT MODAL */}
+      <Dialog open={utilityBillOpen} onOpenChange={setUtilityBillOpen}>
+        <DialogContent className="sm:max-w-lg md:max-w-xl max-h-[92vh] overflow-y-auto">
+          <form onSubmit={handleUtilityBillSubmit} className="space-y-4">
+            <DialogHeader>
+              <div className="flex items-center gap-2">
+                <div className="p-2 rounded-xl bg-amber-500/15 text-amber-600 dark:text-amber-400">
+                  <ZapIcon className="size-5" />
+                </div>
+                <div>
+                  <DialogTitle className="text-base font-bold text-foreground">
+                    Utility Bill Payment
+                  </DialogTitle>
+                  <DialogDescription className="text-xs text-muted-foreground">
+                    Process Light (Electricity) &amp; Water bills with automatic fee and profit calculation.
+                  </DialogDescription>
+                </div>
+              </div>
+            </DialogHeader>
+
+            {/* Bill Type Selector */}
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-foreground">Select Bill Type *</label>
+              <div className="grid grid-cols-3 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setUtilityBillType("ELECTRICITY")}
+                  className={`flex flex-col items-center justify-center p-3 rounded-xl border text-center transition-all ${utilityBillType === "ELECTRICITY"
+                      ? "border-amber-500 bg-amber-500/10 text-amber-700 dark:text-amber-400 font-bold shadow-xs ring-1 ring-amber-500/30"
+                      : "border-border bg-card text-muted-foreground hover:bg-muted/60"
+                    }`}
+                >
+                  <ZapIcon className="size-5 mb-1 text-amber-500" />
+                  <span className="text-xs font-semibold">Light Bill</span>
+                  <span className="text-[10px] opacity-75">Electricity (CEB/LECO)</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setUtilityBillType("WATER")}
+                  className={`flex flex-col items-center justify-center p-3 rounded-xl border text-center transition-all ${utilityBillType === "WATER"
+                      ? "border-blue-500 bg-blue-500/10 text-blue-700 dark:text-blue-400 font-bold shadow-xs ring-1 ring-blue-500/30"
+                      : "border-border bg-card text-muted-foreground hover:bg-muted/60"
+                    }`}
+                >
+                  <DropletIcon className="size-5 mb-1 text-blue-500" />
+                  <span className="text-xs font-semibold">Water Bill</span>
+                  <span className="text-[10px] opacity-75">Water Board (NWSDB)</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setUtilityBillType("OTHER")}
+                  className={`flex flex-col items-center justify-center p-3 rounded-xl border text-center transition-all ${utilityBillType === "OTHER"
+                      ? "border-primary bg-primary/10 text-primary font-bold shadow-xs ring-1 ring-primary/30"
+                      : "border-border bg-card text-muted-foreground hover:bg-muted/60"
+                    }`}
+                >
+                  <ReceiptTextIcon className="size-5 mb-1 text-primary" />
+                  <span className="text-xs font-semibold">Other Bill</span>
+                  <span className="text-[10px] opacity-75">Custom Utility</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Account Number */}
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-foreground">
+                Account / Bill Reference Number *
+              </label>
+              <Input
+                placeholder={
+                  utilityBillType === "ELECTRICITY"
+                    ? "e.g. 0429182390 (10-digit CEB / LECO account)"
+                    : utilityBillType === "WATER"
+                      ? "e.g. 12/34/567/890 (Water Board Account No)"
+                      : "e.g. Account or Reference Number"
+                }
+                value={utilityAccountNumber}
+                onChange={(e) => setUtilityAccountNumber(e.target.value)}
+                className="font-mono text-xs"
+                required
+              />
+            </div>
+
+            {/* Customer Name & Phone */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-muted-foreground">Customer Name (Optional)</label>
+                <Input
+                  placeholder="e.g. Nimal Perera"
+                  value={utilityCustomerName}
+                  onChange={(e) => setUtilityCustomerName(e.target.value)}
+                  className="text-xs"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-muted-foreground">Customer Mobile (Optional)</label>
+                <Input
+                  placeholder="e.g. 0771234567"
+                  value={utilityCustomerPhone}
+                  onChange={(e) => setUtilityCustomerPhone(e.target.value)}
+                  className="font-mono text-xs"
+                />
+              </div>
+            </div>
+
+            {/* Bill Amount */}
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-foreground">
+                Original Bill Amount (LKR) *
+              </label>
+              <div className="relative">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-bold text-muted-foreground">
+                  LKR
+                </span>
+                <Input
+                  type="number"
+                  step="any"
+                  min="1"
+                  placeholder="e.g. 4000 or 7000"
+                  value={utilityBillAmount}
+                  onChange={(e) => {
+                    const val = e.target.value === "" ? "" : Number(e.target.value);
+                    setUtilityBillAmount(val);
+                  }}
+                  className="pl-12 text-sm font-mono font-bold"
+                  required
+                />
+              </div>
+            </div>
+
+            {/* DYNAMIC LIVE CALCULATION & BREAKDOWN CARD */}
+            {Number(utilityBillAmount) > 0 && (
+              <div className="rounded-xl border border-border bg-muted/40 p-3.5 space-y-3">
+
+                {/* Totals Summary */}
+                <div className="pt-2 border-t border-border flex items-center justify-between text-xs">
+                  <div>
+                    <span className="text-muted-foreground">Total to collect from customer: </span>
+                    <span className="font-mono font-bold text-foreground text-sm">
+                      LKR {liveUtilityCharges.totalCustomerPaid.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Custom charges toggle */}
+            <div className="space-y-2">
+              <button
+                type="button"
+                onClick={() => setUtilityIsCustomCharges(!utilityIsCustomCharges)}
+                className="text-[11px] text-primary hover:underline flex items-center gap-1 font-medium"
+              >
+                <span>{utilityIsCustomCharges ? "Hide Custom Charges" : "Customize service charge or fee"}</span>
+              </button>
+
+              {utilityIsCustomCharges && (
+                <div className="grid grid-cols-2 gap-3 p-3 bg-muted/30 rounded-lg border border-border">
+                  <div className="space-y-1">
+                    <label className="text-[11px] font-medium text-muted-foreground">Customer Charge (LKR)</label>
+                    <Input
+                      type="number"
+                      step="any"
+                      min="0"
+                      placeholder="e.g. 30 or 40"
+                      value={utilityCustomServiceCharge}
+                      onChange={(e) =>
+                        setUtilityCustomServiceCharge(e.target.value === "" ? "" : Number(e.target.value))
+                      }
+                      className="font-mono text-xs"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[11px] font-medium text-muted-foreground">Provider Cost Fee (LKR)</label>
+                    <Input
+                      type="number"
+                      step="any"
+                      min="0"
+                      placeholder="e.g. 18 or 23"
+                      value={utilityCustomProviderFee}
+                      onChange={(e) =>
+                        setUtilityCustomProviderFee(e.target.value === "" ? "" : Number(e.target.value))
+                      }
+                      className="font-mono text-xs"
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Payment Method */}
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-foreground">Customer Payment Method</label>
+              <select
+                value={utilityPaymentMethod}
+                onChange={(e: any) => setUtilityPaymentMethod(e.target.value)}
+                className="w-full h-9 rounded-md border border-border bg-card px-3 text-xs text-foreground font-medium outline-none focus:border-ring"
+              >
+                <option value="CASH">Cash (Adds to Shop Cash Drawer)</option>
+                <option value="BANK_TRANSFER">Bank Transfer (Deposits to Bank)</option>
+                <option value="ONLINE">Online / Card</option>
+              </select>
+            </div>
+
+            {utilityPaymentMethod === "BANK_TRANSFER" && (
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-foreground">Deposit Bank Account *</label>
+                <select
+                  value={utilityBankAccountId || ""}
+                  onChange={(e) => setUtilityBankAccountId(e.target.value || null)}
+                  className="w-full h-9 rounded-md border border-border bg-card px-3 text-xs text-foreground font-medium outline-none focus:border-ring"
+                  required
+                >
+                  <option value="">Select bank account...</option>
+                  {bankAccounts.map((b) => (
+                    <option key={b._id} value={b._id}>
+                      {b.bankName} - {b.accountNumber} ({b.accountName})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {/* Notes */}
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-muted-foreground">Optional Notes / Remarks</label>
+              <Input
+                placeholder="e.g. Customer receipt reference or note"
+                value={utilityNote}
+                onChange={(e) => setUtilityNote(e.target.value)}
+                className="text-xs"
+              />
+            </div>
+
+            <DialogFooter className="pt-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setUtilityBillOpen(false)}
+                disabled={submittingUtilityBill}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                size="sm"
+                disabled={submittingUtilityBill || !utilityAccountNumber.trim() || Number(utilityBillAmount) <= 0}
+                className="gap-1.5 font-semibold bg-emerald-600 hover:bg-emerald-700 text-white"
+              >
+                {submittingUtilityBill ? (
+                  <>
+                    <Loader2Icon className="size-3.5 animate-spin" />
+                    Recording Payment...
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle2Icon className="size-3.5" />
+                    Record Bill Payment (LKR {liveUtilityCharges.totalCustomerPaid.toLocaleString(undefined, { minimumFractionDigits: 2 })})
+                  </>
+                )}
               </Button>
             </DialogFooter>
           </form>

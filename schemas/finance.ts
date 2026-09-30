@@ -50,6 +50,14 @@ export const createFinanceRecordSchema = z.object({
   isCrossBranchPayment: z.boolean().optional(),
   collectingShop: z.string().optional().nullable(),
   beneficiaryShop: z.string().optional().nullable(),
+
+  // Utility Bill Payment Fields
+  isUtilityBill: z.boolean().optional(),
+  utilityBillType: z.enum(["ELECTRICITY", "WATER", "OTHER"]).optional().nullable(),
+  utilityAccountNumber: z.string().optional().nullable(),
+  billAmount: z.number().optional().nullable(),
+  serviceCharge: z.number().optional().nullable(),
+  providerFee: z.number().optional().nullable(),
 });
 
 export type CreateFinanceRecordInput = z.infer<typeof createFinanceRecordSchema>;
@@ -87,6 +95,14 @@ export const updateFinanceRecordSchema = z.object({
   isCrossBranchPayment: z.boolean().optional(),
   collectingShop: z.string().optional().nullable(),
   beneficiaryShop: z.string().optional().nullable(),
+
+  // Utility Bill Payment Fields
+  isUtilityBill: z.boolean().optional(),
+  utilityBillType: z.enum(["ELECTRICITY", "WATER", "OTHER"]).optional().nullable(),
+  utilityAccountNumber: z.string().optional().nullable(),
+  billAmount: z.number().optional().nullable(),
+  serviceCharge: z.number().optional().nullable(),
+  providerFee: z.number().optional().nullable(),
 });
 
 export type UpdateFinanceRecordInput = z.infer<typeof updateFinanceRecordSchema>;
@@ -164,3 +180,47 @@ export const settleInterBranchCashSchema = z.object({
 });
 
 export type SettleInterBranchCashInput = z.infer<typeof settleInterBranchCashSchema>;
+
+export const utilityBillTypeEnum = z.enum(["ELECTRICITY", "WATER", "OTHER"]);
+export type UtilityBillType = z.infer<typeof utilityBillTypeEnum>;
+
+export const recordUtilityBillPaymentSchema = z.object({
+  shopId: z.string().min(1, "Shop ID is required"),
+  billType: utilityBillTypeEnum,
+  accountNumber: z.string().min(1, "Account or reference number is required").max(60),
+  customerName: z.string().optional().nullable(),
+  customerPhone: z.string().optional().nullable(),
+  billAmount: z.number().positive("Bill amount must be greater than 0"),
+  serviceCharge: z.number().min(0, "Service charge cannot be negative").optional(),
+  providerFee: z.number().min(0, "Provider fee cannot be negative").optional(),
+  paymentMethod: paymentMethodEnum.optional().default("CASH"),
+  bankAccountId: z.string().optional().nullable(),
+  note: z.string().optional(),
+  date: z.string().optional(),
+});
+
+export type RecordUtilityBillPaymentInput = z.infer<typeof recordUtilityBillPaymentSchema>;
+
+/**
+ * Calculates utility bill charges based on business rules:
+ * - Bill <= 5000: provider fee = 18, customer service charge = 30, profit = 12
+ * - Bill > 5000:  provider fee = 23, customer service charge = 40, profit = 17
+ */
+export function calculateUtilityBillCharges(billAmount: number) {
+  const safeBill = Math.max(0, Number(billAmount) || 0);
+  const isOver5000 = safeBill > 5000;
+  const serviceCharge = safeBill > 0 ? (isOver5000 ? 40 : 30) : 0;
+  const providerFee = safeBill > 0 ? (isOver5000 ? 23 : 18) : 0;
+  const totalCustomerPaid = safeBill + serviceCharge;
+  const costToShop = safeBill + providerFee;
+  const profit = serviceCharge - providerFee;
+
+  return {
+    isOver5000,
+    serviceCharge,
+    providerFee,
+    totalCustomerPaid,
+    costToShop,
+    profit,
+  };
+}

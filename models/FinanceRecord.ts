@@ -45,6 +45,14 @@ export interface IFinanceRecord extends Document {
   relatedBranch?: mongoose.Types.ObjectId | null;
   relatedBranchNote?: string;
 
+  // Utility Bill Payment Fields (Communication shop: Light/Water Bills)
+  isUtilityBill?: boolean;
+  utilityBillType?: "ELECTRICITY" | "WATER" | "OTHER" | null;
+  utilityAccountNumber?: string | null;
+  billAmount?: number | null;
+  serviceCharge?: number | null;
+  providerFee?: number | null;
+
   // Cross-Branch Payment & Inter-Branch Settlement Fields
   isCrossBranchPayment?: boolean;
   collectingShop?: mongoose.Types.ObjectId | null;
@@ -257,6 +265,37 @@ const FinanceRecordSchema = new Schema<IFinanceRecord>(
     relatedBranchNote: {
       type: String,
       default: "",
+    },
+
+    // Utility Bill Payment Fields (Light/Water Bills)
+    isUtilityBill: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+    utilityBillType: {
+      type: String,
+      enum: ["ELECTRICITY", "WATER", "OTHER", null],
+      default: null,
+      index: true,
+    },
+    utilityAccountNumber: {
+      type: String,
+      default: null,
+      trim: true,
+      index: true,
+    },
+    billAmount: {
+      type: Number,
+      default: null,
+    },
+    serviceCharge: {
+      type: Number,
+      default: null,
+    },
+    providerFee: {
+      type: Number,
+      default: null,
     },
 
     // Cross-Branch Payment & Inter-Branch Settlement Fields

@@ -17,6 +17,8 @@ import {
   updateFinanceRecordSchema,
   reviewFinanceRecordSchema,
   settleInterBranchCashSchema,
+  recordUtilityBillPaymentSchema,
+  calculateUtilityBillCharges,
 } from "@/schemas/finance";
 import { canCreateFinanceRecord, canReviewFinanceRecord, isAdmin } from "@/lib/rbac";
 import { recalculateShopRunningBalance, getShopInterBranchDues } from "@/lib/balance";
@@ -34,6 +36,7 @@ interface GetFinanceRecordsParams {
   page?: number;
   limit?: number;
   isCommunicationItem?: boolean;
+  isUtilityBill?: boolean;
 }
 
 export async function getFinanceRecordsAction(params: GetFinanceRecordsParams = {}) {
@@ -76,7 +79,15 @@ export async function getFinanceRecordsAction(params: GetFinanceRecordsParams = 
     }
 
     if (params.categoryId && params.categoryId !== "ALL") {
-      query.category = new mongoose.Types.ObjectId(params.categoryId);
+      if (params.categoryId === "UTILITY_BILL") {
+        query.isUtilityBill = true;
+      } else {
+        query.category = new mongoose.Types.ObjectId(params.categoryId);
+      }
+    }
+
+    if (params.isUtilityBill !== undefined) {
+      query.isUtilityBill = params.isUtilityBill;
     }
 
     if (params.isCommunicationItem !== undefined) {
@@ -106,6 +117,9 @@ export async function getFinanceRecordsAction(params: GetFinanceRecordsParams = 
         { billNumber: { $regex: cleanSearch, $options: "i" } },
         { reason: { $regex: cleanSearch, $options: "i" } },
         { itemCode: { $regex: cleanSearch, $options: "i" } },
+        { utilityAccountNumber: { $regex: cleanSearch, $options: "i" } },
+        { customerName: { $regex: cleanSearch, $options: "i" } },
+        { customerPhone: { $regex: cleanSearch, $options: "i" } },
       ];
     }
 
@@ -377,20 +391,14 @@ export async function updateFinanceRecordAction(formData: unknown) {
       return { success: false, error: "Record not found." };
     }
 
-    // Staff can only edit PENDING records they created OR communication records not yet reviewed by a verifier
+    // Staff cannot edit records once created. Only ADMIN can edit financial records.
     if (role === "STAFF") {
-      if (record.createdBy.toString() !== session.user.id) {
-        return { success: false, error: "You can only edit records you created." };
-      }
-      const isCommEditable = record.isCommunicationItem && !record.reviewedBy;
-      if (!isCommEditable && (record.status !== "PENDING" || record.isLocked)) {
-        return {
-          success: false,
-          error: "This record has already been reviewed and locked. Editing is restricted.",
-        };
-      }
+      return {
+        success: false,
+        error: "Staff members cannot edit financial records once created. Only administrators are authorized.",
+      };
     } else if (role !== "ADMIN") {
-      return { success: false, error: "Finance Verifiers cannot edit records directly." };
+      return { success: false, error: "Only administrators can edit financial records." };
     }
 
     const previousAmount = record.amount;
@@ -519,19 +527,14 @@ export async function deleteFinanceRecordAction(recordId: string, overrideReason
       return { success: false, error: "Finance record not found." };
     }
 
-    // Role check
+    // Role check: Staff cannot delete records once created. Only ADMIN can delete financial records.
     if (role === "STAFF") {
-      if (record.createdBy.toString() !== session.user.id) {
-        return { success: false, error: "You can only delete records you created." };
-      }
-      if (record.status !== "PENDING" || record.isLocked) {
-        return {
-          success: false,
-          error: "This record has already been reviewed and locked. Deletion is restricted.",
-        };
-      }
+      return {
+        success: false,
+        error: "Staff members cannot delete financial records once created. Only administrators are authorized.",
+      };
     } else if (role !== "ADMIN") {
-      return { success: false, error: "Finance Verifiers cannot delete records." };
+      return { success: false, error: "Only administrators can delete financial records." };
     }
 
     const shopId = record.shop;
@@ -1197,4 +1200,385 @@ export async function getShopInterBranchDuesAction(shopId: string) {
     return { success: false, error: "Failed to fetch inter-branch dues." };
   }
 }
+
+/**
+ * Record a utility bill payment (Light/Electricity bill or Water bill).
+ * Strictly applies to COMMUNICATION shops only!
+ *
+ * Rules:
+ * - Bill <= 5000: provider fee = 18, customer service charge = 30, profit = 12
+ * - Bill > 5000:  provider fee = 23, customer service charge = 40, profit = 17
+ *
+ * Customer pays: billAmount + serviceCharge (enters cash drawer / running balance)
+ * Shop deduction: billAmount + providerFee
+ * Net profit: serviceCharge - providerFee
+ */
+export async function recordUtilityBillPaymentAction(formData: unknown) {
+  const session = await auth();
+  if (!session?.user?.id) {
+    return { success: false, error: "Unauthorized. Please log in." };
+  }
+
+  const role = (session.user as { role?: string }).role;
+  const userShop = (session.user as { shop?: string }).shop;
+
+  const cleanData = sanitizeInput(formData);
+  const result = recordUtilityBillPaymentSchema.safeParse(cleanData);
+  if (!result.success) {
+    return {
+      success: false,
+      error: result.error.issues[0]?.message || "Validation failed",
+    };
+  }
+
+  try {
+    await connectDB();
+
+    let shopId = result.data.shopId;
+    if (role === "STAFF") {
+      const dbUser = await User.findById(session.user.id).select("shop shops").lean();
+      const currentActiveShop = dbUser?.shop ? dbUser.shop.toString() : userShop;
+      const assignedIds = (dbUser?.shops || []).map((s: any) => s.toString());
+      if (currentActiveShop) assignedIds.push(currentActiveShop);
+
+      if (!assignedIds.includes(shopId)) {
+        return { success: false, error: "You are not assigned to this branch." };
+      }
+    }
+
+    const shop = await Shop.findById(shopId);
+    if (!shop || !shop.isActive) {
+      return { success: false, error: "Shop not found or inactive." };
+    }
+
+    // STRICT BUSINESS RULE: Only applicable to communication shops!
+    if (shop.shopType !== "COMMUNICATION") {
+      return {
+        success: false,
+        error: "Utility bill payments are only enabled for Communication shops.",
+      };
+    }
+
+    const billAmount = Number(result.data.billAmount);
+    if (billAmount <= 0) {
+      return { success: false, error: "Bill amount must be greater than zero." };
+    }
+
+    // Calculate default charges based on tier
+    // 1 - <= 5000: providerFee = 18, serviceCharge = 30, profit = 12
+    // 2 - > 5000:  providerFee = 23, serviceCharge = 40, profit = 17
+    const calculated = calculateUtilityBillCharges(billAmount);
+
+    const finalServiceCharge =
+      typeof result.data.serviceCharge === "number" && !isNaN(result.data.serviceCharge)
+        ? result.data.serviceCharge
+        : calculated.serviceCharge;
+
+    const finalProviderFee =
+      typeof result.data.providerFee === "number" && !isNaN(result.data.providerFee)
+        ? result.data.providerFee
+        : calculated.providerFee;
+
+    const totalCollected = billAmount + finalServiceCharge;
+    const totalCost = billAmount + finalProviderFee;
+    const profit = finalServiceCharge - finalProviderFee;
+
+    // Find or create "Utility Bill Payments" category
+    let category = await Category.findOne({
+      name: { $regex: /^utility bill payments$/i },
+      type: "INCOME",
+      isActive: true,
+    });
+    if (!category) {
+      category = await Category.findOne({
+        name: { $regex: /^bill payments$/i },
+        type: "INCOME",
+        isActive: true,
+      });
+    }
+    if (!category) {
+      category = await Category.create({
+        name: "Utility Bill Payments",
+        description: "Revenue and collections from light, water, and utility bills",
+        type: "INCOME",
+        colorToken: "chart-2",
+        isActive: true,
+        createdBy: new mongoose.Types.ObjectId(session.user.id),
+      });
+    }
+
+    const recordDate = result.data.date ? new Date(result.data.date) : new Date();
+    const datePrefix = recordDate.toISOString().slice(2, 7).replace("-", "");
+    const countToday = await FinanceRecord.countDocuments({
+      shop: shop._id,
+      date: {
+        $gte: new Date(new Date().setHours(0, 0, 0, 0)),
+        $lte: new Date(new Date().setHours(23, 59, 59, 999)),
+      },
+    });
+    const seq = String(countToday + 1).padStart(4, "0");
+    const billNumber = `${shop.code || "COMM"}-BILL-${datePrefix}-${seq}`;
+
+    const typeLabel =
+      result.data.billType === "ELECTRICITY"
+        ? "Light Bill (Electricity)"
+        : result.data.billType === "WATER"
+        ? "Water Bill"
+        : "Utility Bill";
+
+    const reason = `${typeLabel}: Acc #${result.data.accountNumber.trim()} (Bill: LKR ${billAmount.toLocaleString()} + Srv: LKR ${finalServiceCharge})`;
+
+    const paymentMethod = result.data.paymentMethod || "CASH";
+    const bankAccountId =
+      paymentMethod === "BANK_TRANSFER" && result.data.bankAccountId
+        ? new mongoose.Types.ObjectId(result.data.bankAccountId)
+        : null;
+
+    const newRecord = await FinanceRecord.create({
+      date: recordDate,
+      shop: shop._id,
+      category: category._id,
+      paymentMethod,
+      bankAccount: bankAccountId,
+      billNumber,
+      reason,
+      amount: totalCollected, // Customer paid total (adds to cash balance!)
+      type: "INCOME",
+      status: "APPROVED",
+      approvedAmount: totalCollected,
+      runningBalance: 0,
+      isLocked: true,
+
+      // Communication & Utility Bill Fields
+      isCommunicationItem: true,
+      isUtilityBill: true,
+      utilityBillType: result.data.billType,
+      utilityAccountNumber: result.data.accountNumber.trim(),
+      billAmount,
+      serviceCharge: finalServiceCharge,
+      providerFee: finalProviderFee,
+
+      actualPrice: totalCost,
+      sellingPrice: totalCollected,
+      commissionEarned: profit,
+      itemCode:
+        result.data.billType === "ELECTRICITY"
+          ? "UTIL-ELEC"
+          : result.data.billType === "WATER"
+          ? "UTIL-WATER"
+          : "UTIL-OTHER",
+      itemName: typeLabel,
+      customerName: result.data.customerName?.trim() || null,
+      customerPhone: result.data.customerPhone?.trim() || null,
+      quantity: 1,
+
+      isDeleted: false,
+      createdBy: new mongoose.Types.ObjectId(session.user.id),
+    });
+
+    // Update bank balance if paid via bank transfer
+    if (paymentMethod === "BANK_TRANSFER" && bankAccountId) {
+      const bank = await BankAccount.findById(bankAccountId);
+      if (bank) {
+        bank.currentBalance += totalCollected;
+        await bank.save();
+      }
+    }
+
+    // Recalculate shop sequential running balance (adds totalCollected to physical cash drawer!)
+    await recalculateShopRunningBalance(shop._id, recordDate);
+
+    await logAuditEvent({
+      actorId: session.user.id,
+      action: "RECORD_UTILITY_BILL_PAYMENT",
+      targetType: "FinanceRecord",
+      targetId: newRecord._id,
+      metadata: {
+        billNumber,
+        billType: result.data.billType,
+        accountNumber: result.data.accountNumber,
+        billAmount,
+        serviceCharge: finalServiceCharge,
+        providerFee: finalProviderFee,
+        totalCollected,
+        profit,
+        shop: shop.name,
+      },
+    });
+
+    revalidatePath("/dashboard/staff/finances");
+    revalidatePath("/dashboard/staff/dashboard");
+    revalidatePath(`/dashboard/admin/shops/${shop._id}`);
+
+    return {
+      success: true,
+      message: `${typeLabel} payment recorded! Customer paid LKR ${totalCollected.toLocaleString()} (Profit: LKR ${profit.toFixed(2)}).`,
+      record: JSON.parse(JSON.stringify(newRecord)),
+      billNumber,
+      totalCollected,
+      profit,
+    };
+  } catch (error) {
+    console.error("Record utility bill payment error:", error);
+    return { success: false, error: "Failed to record utility bill payment." };
+  }
+}
+
+/**
+ * Get comprehensive analytics and records for utility bill payments.
+ * Supports filters by period, bill type (Electricity/Water/Other), staff, and search query.
+ */
+export async function getUtilityBillAnalyticsAction(params: {
+  shopId: string;
+  period?: "today" | "week" | "month" | "year" | "custom";
+  startDate?: string;
+  endDate?: string;
+  billTypeFilter?: string;
+  staffFilter?: string;
+  search?: string;
+}) {
+  const session = await auth();
+  if (!session?.user?.id) {
+    return { success: false, error: "Unauthorized" };
+  }
+
+  try {
+    await connectDB();
+    const shop = await Shop.findById(params.shopId);
+    if (!shop) {
+      return { success: false, error: "Shop not found." };
+    }
+
+    const now = new Date();
+    let start: Date;
+    let end = new Date(now);
+    end.setHours(23, 59, 59, 999);
+
+    switch (params.period) {
+      case "today":
+        start = new Date(now);
+        start.setHours(0, 0, 0, 0);
+        break;
+      case "week":
+        start = new Date(now);
+        start.setDate(now.getDate() - 7);
+        start.setHours(0, 0, 0, 0);
+        break;
+      case "year":
+        start = new Date(now.getFullYear(), 0, 1);
+        start.setHours(0, 0, 0, 0);
+        break;
+      case "custom":
+        start = params.startDate ? new Date(params.startDate) : new Date(now.getFullYear(), now.getMonth(), 1);
+        if (params.endDate) {
+          end = new Date(params.endDate);
+          end.setHours(23, 59, 59, 999);
+        }
+        break;
+      case "month":
+      default:
+        start = new Date(now.getFullYear(), now.getMonth(), 1);
+        start.setHours(0, 0, 0, 0);
+        break;
+    }
+
+    const query: Record<string, unknown> = {
+      shop: shop._id,
+      isUtilityBill: true,
+      isDeleted: { $ne: true },
+      date: { $gte: start, $lte: end },
+    };
+
+    if (params.billTypeFilter && params.billTypeFilter !== "ALL") {
+      query.utilityBillType = params.billTypeFilter;
+    }
+
+    if (params.staffFilter && params.staffFilter !== "ALL") {
+      query.createdBy = new mongoose.Types.ObjectId(params.staffFilter);
+    }
+
+    if (params.search && params.search.trim()) {
+      const s = params.search.trim();
+      query.$or = [
+        { utilityAccountNumber: { $regex: s, $options: "i" } },
+        { customerName: { $regex: s, $options: "i" } },
+        { customerPhone: { $regex: s, $options: "i" } },
+        { billNumber: { $regex: s, $options: "i" } },
+      ];
+    }
+
+    const records = await FinanceRecord.find(query)
+      .populate("createdBy", "name email")
+      .populate("category", "name")
+      .sort({ date: -1, createdAt: -1 })
+      .lean();
+
+    let totalBillsCount = records.length;
+    let totalCollected = 0;
+    let totalBillAmount = 0;
+    let totalServiceCharges = 0;
+    let totalProviderFees = 0;
+    let totalNetProfit = 0;
+
+    let electricityCount = 0;
+    let electricityAmount = 0;
+    let electricityProfit = 0;
+
+    let waterCount = 0;
+    let waterAmount = 0;
+    let waterProfit = 0;
+
+    let otherCount = 0;
+    let otherAmount = 0;
+    let otherProfit = 0;
+
+    for (const r of records) {
+      const netVal = r.approvedAmount ?? r.amount;
+      const bAmt = Number(r.billAmount || 0);
+      const sCharge = Number(r.serviceCharge || 0);
+      const pFee = Number(r.providerFee || 0);
+      const profit = Number(r.commissionEarned !== undefined ? r.commissionEarned : (sCharge - pFee));
+
+      totalCollected += netVal;
+      totalBillAmount += bAmt;
+      totalServiceCharges += sCharge;
+      totalProviderFees += pFee;
+      totalNetProfit += profit;
+
+      if (r.utilityBillType === "ELECTRICITY") {
+        electricityCount++;
+        electricityAmount += bAmt;
+        electricityProfit += profit;
+      } else if (r.utilityBillType === "WATER") {
+        waterCount++;
+        waterAmount += bAmt;
+        waterProfit += profit;
+      } else {
+        otherCount++;
+        otherAmount += bAmt;
+        otherProfit += profit;
+      }
+    }
+
+    return {
+      success: true,
+      totalBillsCount,
+      totalCollected,
+      totalBillAmount,
+      totalServiceCharges,
+      totalProviderFees,
+      totalNetProfit,
+      breakdown: {
+        electricity: { count: electricityCount, amount: electricityAmount, profit: electricityProfit },
+        water: { count: waterCount, amount: waterAmount, profit: waterProfit },
+        other: { count: otherCount, amount: otherAmount, profit: otherProfit },
+      },
+      records: JSON.parse(JSON.stringify(records)),
+    };
+  } catch (error) {
+    console.error("Get utility bill analytics error:", error);
+    return { success: false, error: "Failed to fetch utility bill analytics." };
+  }
+}
+
 
