@@ -562,21 +562,18 @@ export function SingleShopView({
   // Item Management Handlers
   const onAddItem = async (data: CreateCommunicationItemInput) => {
     try {
-      const code = (data.itemCode || "").toUpperCase();
-      const name = (data.name || "").toUpperCase();
-      const isTelecomKeyword = ["DIALOG", "MOBITEL", "AIRTEL", "HUTCH"].some(
-        (op) => code.includes(op) || name.includes(op)
-      );
-      if (data.isTelecomReload || isTelecomKeyword) {
-        data.isTelecomReload = true;
+      if (data.isTelecomReload) {
+        // For telecom reload items: prices are dynamic at POS, zero out fixed prices
         data.actualPrice = 0;
         data.sellingPrice = 0;
-        if (!data.telecomOperator || data.telecomOperator === "OTHER") {
-          data.telecomOperator = classifyTelecomOperator(code || name);
-        }
         if (!data.commissionRate || data.commissionRate <= 0) {
           data.commissionRate = 4.0;
         }
+      } else {
+        // For standard items: clear any telecom-specific fields
+        data.isTelecomReload = false;
+        data.telecomOperator = undefined as any;
+        data.commissionRate = 0;
       }
       const res = await createCommunicationItemAction(data);
       if (res.success) {
@@ -602,21 +599,18 @@ export function SingleShopView({
 
   const onEditItem = async (data: UpdateCommunicationItemInput) => {
     try {
-      const code = (data.itemCode || "").toUpperCase();
-      const name = (data.name || "").toUpperCase();
-      const isTelecomKeyword = ["DIALOG", "MOBITEL", "AIRTEL", "HUTCH"].some(
-        (op) => code.includes(op) || name.includes(op)
-      );
-      if (data.isTelecomReload || isTelecomKeyword) {
-        data.isTelecomReload = true;
+      if (data.isTelecomReload) {
+        // For telecom reload items: prices are dynamic at POS, zero out fixed prices
         data.actualPrice = 0;
         data.sellingPrice = 0;
-        if (!data.telecomOperator || data.telecomOperator === "OTHER") {
-          data.telecomOperator = classifyTelecomOperator(code || name);
-        }
         if (!data.commissionRate || data.commissionRate <= 0) {
           data.commissionRate = 4.0;
         }
+      } else {
+        // For standard items: clear any telecom-specific fields
+        data.isTelecomReload = false;
+        data.telecomOperator = undefined as any;
+        data.commissionRate = 0;
       }
       const res = await updateCommunicationItemAction(data);
       if (res.success) {
@@ -1088,10 +1082,19 @@ export function SingleShopView({
   const standardColumns: ColumnDef<any>[] = [
     {
       accessorKey: "date",
-      header: "Date",
-      cell: ({ row }) => (
-        <span className="font-mono text-xs">{new Date(row.original.date).toLocaleDateString()}</span>
-      ),
+      header: "Date & Time",
+      cell: ({ row }) => {
+        const rawDate = row.original.createdAt || row.original.date;
+        const d = new Date(rawDate);
+        return (
+          <div className="flex flex-col">
+            <span className="font-mono text-xs whitespace-nowrap">{d.toLocaleDateString()}</span>
+            <span className="font-mono text-[10px] text-muted-foreground whitespace-nowrap">
+              {d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: true })}
+            </span>
+          </div>
+        );
+      },
     },
     {
       accessorKey: "billNumber",
@@ -1146,10 +1149,19 @@ export function SingleShopView({
   const commColumns: ColumnDef<any>[] = [
     {
       accessorKey: "date",
-      header: "Date",
-      cell: ({ row }) => (
-        <span className="font-mono text-xs">{new Date(row.original.date).toLocaleDateString()}</span>
-      ),
+      header: "Date & Time",
+      cell: ({ row }) => {
+        const rawDate = row.original.createdAt || row.original.date;
+        const d = new Date(rawDate);
+        return (
+          <div className="flex flex-col">
+            <span className="font-mono text-xs whitespace-nowrap">{d.toLocaleDateString()}</span>
+            <span className="font-mono text-[10px] text-muted-foreground whitespace-nowrap">
+              {d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: true })}
+            </span>
+          </div>
+        );
+      },
     },
     {
       accessorKey: "billNumber",
@@ -1281,6 +1293,18 @@ export function SingleShopView({
       cell: ({ row }) => {
         const item = row.original;
         if (item.isTelecomReload) {
+          if (item.actualPrice && item.actualPrice > 0) {
+            return (
+              <div className="flex flex-col">
+                <span className="font-mono text-xs font-semibold text-foreground">
+                  LKR {Number(item.actualPrice).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                </span>
+                <span className="text-[10px] text-muted-foreground font-mono">
+                  Package Base Price
+                </span>
+              </div>
+            );
+          }
           return (
             <span className="text-[11px] text-muted-foreground font-mono">
               Net (100 - {item.commissionRate ?? 0}%)
@@ -1300,9 +1324,21 @@ export function SingleShopView({
       cell: ({ row }) => {
         const item = row.original;
         if (item.isTelecomReload) {
+          if (item.sellingPrice && item.sellingPrice > 0) {
+            return (
+              <div className="flex flex-col">
+                <span className="font-mono text-xs font-semibold text-foreground">
+                  LKR {Number(item.sellingPrice).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                </span>
+                <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-mono">
+                  Package Retail Price
+                </span>
+              </div>
+            );
+          }
           return (
             <Badge variant="outline" className="font-mono text-[10px] bg-primary/5 text-primary border-primary/30">
-              Dynamic (Custom)
+              Dynamic / Custom
             </Badge>
           );
         }
@@ -1319,6 +1355,21 @@ export function SingleShopView({
       cell: ({ row }) => {
         const item = row.original;
         if (item.isTelecomReload) {
+          if (item.actualPrice && item.actualPrice > 0 && item.sellingPrice && item.sellingPrice > 0) {
+            const comm = Number(((item.actualPrice * ((item.commissionRate ?? 4) / 100))).toFixed(2));
+            const markup = Math.max(0, Number((item.sellingPrice - item.actualPrice).toFixed(2)));
+            const totalProfit = Number((comm + markup).toFixed(2));
+            return (
+              <div className="flex flex-col">
+                <span className="font-mono text-xs font-bold text-emerald-600 dark:text-emerald-400">
+                  +LKR {totalProfit.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                </span>
+                <span className="text-[10px] text-muted-foreground font-mono">
+                  {item.commissionRate ?? 4}% comm + markup
+                </span>
+              </div>
+            );
+          }
           return (
             <div className="flex flex-col">
               <span className="font-mono text-xs font-bold text-emerald-600 dark:text-emerald-400">
@@ -3152,8 +3203,6 @@ export function SingleShopView({
                   type="button"
                   onClick={() => {
                     createItemForm.setValue("isTelecomReload", true);
-                    createItemForm.setValue("actualPrice", 0);
-                    createItemForm.setValue("sellingPrice", 0);
                     if (!createItemForm.watch("telecomOperator")) {
                       createItemForm.setValue("telecomOperator", "DIALOG");
                     }
@@ -3203,7 +3252,7 @@ export function SingleShopView({
                     </div>
                   </div>
                   <p className="text-[11px] text-muted-foreground">
-                    Cashiers enter dynamic reload amounts at the POS (e.g. LKR 200). Profit is computed directly from this commission rate.
+                    Cashiers enter dynamic reload amounts or fixed packages at the POS. Base cost and profit are automatically computed.
                   </p>
                 </div>
               )}
@@ -3246,11 +3295,45 @@ export function SingleShopView({
                 </div>
               </div>
             ) : (
-              <div className="p-3 rounded-lg border border-primary/20 bg-primary/5 text-xs text-muted-foreground flex items-center gap-2">
-                <SmartphoneIcon className="size-4 text-primary shrink-0" />
-                <span>
-                  <strong>No Base or Selling Price Required:</strong> Telecommunication items use variable reload amounts entered by the cashier at the POS. Base cost and profit are automatically derived from the commission rate.
-                </span>
+              <div className="space-y-2 p-3 rounded-lg border border-primary/20 bg-primary/5">
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-semibold uppercase text-muted-foreground">
+                        Default Base Unit Price (LKR)
+                      </label>
+                      <span className="text-[10px] text-muted-foreground">(Optional)</span>
+                    </div>
+                    <Input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      placeholder="e.g. 998 (or leave 0)"
+                      {...createItemForm.register("actualPrice", { valueAsNumber: true })}
+                      className="h-9 text-xs font-mono font-semibold"
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-semibold uppercase text-muted-foreground">
+                        Default Selling Price (LKR)
+                      </label>
+                      <span className="text-[10px] text-muted-foreground">(Optional)</span>
+                    </div>
+                    <Input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      placeholder="e.g. 1000 (or leave 0)"
+                      {...createItemForm.register("sellingPrice", { valueAsNumber: true })}
+                      className="h-9 text-xs font-mono font-semibold"
+                    />
+                  </div>
+                </div>
+                <p className="text-[11px] text-muted-foreground">
+                  💡 <strong>Fixed Packages:</strong> Pre-configure package base face value (e.g. 998) and selling price (e.g. 1000). Leave 0 for flexible on-demand reload amounts.
+                </p>
               </div>
             )}
 
@@ -3328,8 +3411,6 @@ export function SingleShopView({
                   type="button"
                   onClick={() => {
                     editItemForm.setValue("isTelecomReload", true);
-                    editItemForm.setValue("actualPrice", 0);
-                    editItemForm.setValue("sellingPrice", 0);
                     if (!editItemForm.watch("telecomOperator")) {
                       editItemForm.setValue("telecomOperator", "DIALOG");
                     }
@@ -3379,7 +3460,7 @@ export function SingleShopView({
                     </div>
                   </div>
                   <p className="text-[11px] text-muted-foreground">
-                    Cashiers enter dynamic reload amounts at the POS (e.g. LKR 200). Profit is computed directly from this commission rate.
+                    Cashiers enter dynamic reload amounts or fixed packages at the POS. Base cost and profit are automatically computed.
                   </p>
                 </div>
               )}
@@ -3422,11 +3503,45 @@ export function SingleShopView({
                 </div>
               </div>
             ) : (
-              <div className="p-3 rounded-lg border border-primary/20 bg-primary/5 text-xs text-muted-foreground flex items-center gap-2">
-                <SmartphoneIcon className="size-4 text-primary shrink-0" />
-                <span>
-                  <strong>No Base or Selling Price Required:</strong> Telecommunication items use variable reload amounts entered by the cashier at the POS. Base cost and profit are automatically derived from the commission rate.
-                </span>
+              <div className="space-y-2 p-3 rounded-lg border border-primary/20 bg-primary/5">
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-semibold uppercase text-muted-foreground">
+                        Default Base Unit Price (LKR)
+                      </label>
+                      <span className="text-[10px] text-muted-foreground">(Optional)</span>
+                    </div>
+                    <Input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      placeholder="e.g. 998 (or leave 0)"
+                      {...editItemForm.register("actualPrice", { valueAsNumber: true })}
+                      className="h-9 text-xs font-mono font-semibold"
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-semibold uppercase text-muted-foreground">
+                        Default Selling Price (LKR)
+                      </label>
+                      <span className="text-[10px] text-muted-foreground">(Optional)</span>
+                    </div>
+                    <Input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      placeholder="e.g. 1000 (or leave 0)"
+                      {...editItemForm.register("sellingPrice", { valueAsNumber: true })}
+                      className="h-9 text-xs font-mono font-semibold"
+                    />
+                  </div>
+                </div>
+                <p className="text-[11px] text-muted-foreground">
+                  💡 <strong>Fixed Packages:</strong> Pre-configure package base face value (e.g. 998) and selling price (e.g. 1000). Leave 0 for flexible on-demand reload amounts.
+                </p>
               </div>
             )}
 

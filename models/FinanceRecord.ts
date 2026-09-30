@@ -36,6 +36,8 @@ export interface IFinanceRecord extends Document {
   discountPrice?: number;
   additionalCost?: number;
   isTelecomReload?: boolean;
+  telecomType?: "CUSTOM" | "PACKAGE" | null;
+  packageBasePrice?: number | null;
   telecomOperator?: string | null;
   commissionRate?: number;
   commissionEarned?: number;
@@ -221,6 +223,15 @@ const FinanceRecordSchema = new Schema<IFinanceRecord>(
       type: Boolean,
       default: false,
       index: true,
+    },
+    telecomType: {
+      type: String,
+      enum: ["CUSTOM", "PACKAGE", null],
+      default: null,
+    },
+    packageBasePrice: {
+      type: Number,
+      default: null,
     },
     telecomOperator: {
       type: String,

@@ -715,6 +715,8 @@ export async function createCommunicationSaleBatchAction(payload: {
     additionalCost?: number;
     amount: number;
     isTelecomReload?: boolean;
+    telecomType?: "CUSTOM" | "PACKAGE";
+    packageBasePrice?: number;
     telecomOperator?: string | null;
     commissionRate?: number;
   }>;
@@ -893,15 +895,34 @@ export async function createCommunicationSaleBatchAction(payload: {
 
       // If it's a telecom reload, compute commission earned and set base wholesale cost
       let commissionEarned = 0;
+      let telecomType: "CUSTOM" | "PACKAGE" = (item as any).telecomType || "CUSTOM";
+      const rawPkgBase = typeof (item as any).packageBasePrice === "number" ? Number((item as any).packageBasePrice) : 0;
+      let packageBasePrice: number | undefined = undefined;
+
       if (isTelecomReload) {
-        commissionEarned = Number(((netAmount * (commissionRate / 100))).toFixed(2));
-        resolvedActualPrice = Math.max(0, Number((netAmount - commissionEarned).toFixed(2)));
+        if (telecomType === "PACKAGE" && rawPkgBase > 0) {
+          packageBasePrice = rawPkgBase;
+          // Commission earned on wholesale package base unit price (e.g. 998 * 4% = 39.92)
+          const commFromBase = Number(((packageBasePrice * (commissionRate / 100))).toFixed(2));
+          // Extra markup earned from selling price above package base price (e.g. 1000 - 998 = 2.00)
+          const markup = Math.max(0, Number((unitSelling - packageBasePrice).toFixed(2)));
+          // Total profit = commission from base + markup (e.g. 39.92 + 2 = 41.92)
+          commissionEarned = Number((commFromBase + markup).toFixed(2));
+          // Base wholesale cost to shop = package base price - commission from base (e.g. 998 - 39.92 = 958.08)
+          resolvedActualPrice = Math.max(0, Number((packageBasePrice - commFromBase).toFixed(2)));
+        } else {
+          telecomType = "CUSTOM";
+          commissionEarned = Number(((netAmount * (commissionRate / 100))).toFixed(2));
+          resolvedActualPrice = Math.max(0, Number((netAmount - commissionEarned).toFixed(2)));
+        }
       }
 
       const recordReason = isCredit
         ? `Credit Sale to ${customerCreditDoc.name} (${customerCreditDoc.phone}): ${item.itemName} (${item.quantity} ${item.quantity === 1 ? "unit" : "units"})`
         : isTelecomReload
-        ? `Telecom Reload: ${item.itemName} (LKR ${netAmount.toLocaleString()})`
+        ? telecomType === "PACKAGE" && packageBasePrice
+          ? `Telecom Package: ${item.itemName} (Base: LKR ${packageBasePrice}, Sold: LKR ${netAmount.toLocaleString()})`
+          : `Telecom Reload: ${item.itemName} (LKR ${netAmount.toLocaleString()})`
         : `Retail Sale: ${item.itemName} (${item.quantity} ${item.quantity === 1 ? "unit" : "units"})`;
 
       await FinanceRecord.create({
@@ -935,6 +956,8 @@ export async function createCommunicationSaleBatchAction(payload: {
         discountPrice: Number(item.discountPrice || 0),
         additionalCost: Number(item.additionalCost || 0),
         isTelecomReload: Boolean(isTelecomReload),
+        telecomType: isTelecomReload ? telecomType : undefined,
+        packageBasePrice: isTelecomReload && telecomType === "PACKAGE" ? packageBasePrice : undefined,
         telecomOperator: isTelecomReload ? telecomOperator : undefined,
         commissionRate: isTelecomReload ? commissionRate : undefined,
         commissionEarned: isTelecomReload ? commissionEarned : undefined,

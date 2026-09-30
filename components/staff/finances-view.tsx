@@ -71,6 +71,8 @@ import {
   DollarSignIcon,
   AlertOctagonIcon,
   SmartphoneIcon,
+  ZapIcon,
+  PackageIcon,
 } from "lucide-react";
 import { toast } from "@/components/ui/toast";
 import { recordItemWastageAction } from "@/actions/communication";
@@ -88,6 +90,8 @@ interface CommCartItem {
   additionalCost?: number;
   netAmount: number;
   isTelecomReload?: boolean;
+  telecomType?: "CUSTOM" | "PACKAGE";
+  packageBasePrice?: number;
   telecomOperator?: "DIALOG" | "MOBITEL" | "AIRTEL" | "HUTCH" | "OTHER" | null;
   commissionRate?: number;
   commissionEarned?: number;
@@ -211,6 +215,8 @@ export function FinancesView({
   const [commAdditionalCost, setCommAdditionalCost] = React.useState<number>(0);
   const [commCustomItemName, setCommCustomItemName] = React.useState("");
   const [commCustomCostPrice, setCommCustomCostPrice] = React.useState<number>(0);
+  const [commTelecomType, setCommTelecomType] = React.useState<"CUSTOM" | "PACKAGE">("CUSTOM");
+  const [commPackageBasePrice, setCommPackageBasePrice] = React.useState<number>(0);
   const [commIsRelatedToBranch, setCommIsRelatedToBranch] = React.useState(false);
   const [commRelatedBranch, setCommRelatedBranch] = React.useState<string | null>(null);
   const [commRelatedBranchNote, setCommRelatedBranchNote] = React.useState("");
@@ -579,10 +585,18 @@ export function FinancesView({
       setMatchedItem(enriched);
       setIsUnlistedItem(false);
       if (isReload) {
-        setCommUnitPrice(0);
         setCommQuantity(1);
         setCommDiscountPrice(0);
         setCommAdditionalCost(0);
+        if (found.actualPrice && found.actualPrice > 0 && found.sellingPrice && found.sellingPrice > 0) {
+          setCommTelecomType("PACKAGE");
+          setCommPackageBasePrice(found.actualPrice);
+          setCommUnitPrice(found.sellingPrice);
+        } else {
+          setCommTelecomType("CUSTOM");
+          setCommPackageBasePrice(0);
+          setCommUnitPrice(0);
+        }
       } else {
         setCommUnitPrice(found.sellingPrice || 0);
       }
@@ -621,13 +635,32 @@ export function FinancesView({
 
     // RELOAD VALIDATION
     if (isReload) {
-      if (!commUnitPrice || commUnitPrice <= 0) {
-        toast.create({
-          title: "Reload Amount Required",
-          description: "Please enter a valid reload amount (e.g. LKR 100, 200, 500).",
-          type: "error",
-        });
-        return;
+      if (commTelecomType === "PACKAGE") {
+        if (!commPackageBasePrice || commPackageBasePrice <= 0) {
+          toast.create({
+            title: "Package Base Price Required",
+            description: "Please enter the wholesale/base unit price of the package (e.g. LKR 998).",
+            type: "error",
+          });
+          return;
+        }
+        if (!commUnitPrice || commUnitPrice <= 0) {
+          toast.create({
+            title: "Selling Price Required",
+            description: "Please enter the customer selling price (e.g. LKR 1000).",
+            type: "error",
+          });
+          return;
+        }
+      } else {
+        if (!commUnitPrice || commUnitPrice <= 0) {
+          toast.create({
+            title: "Reload Amount Required",
+            description: "Please enter a valid reload amount (e.g. LKR 100, 200, 500).",
+            type: "error",
+          });
+          return;
+        }
       }
     } else {
       // STANDARD ITEM VALIDATION
@@ -653,21 +686,38 @@ export function FinancesView({
       }
     }
 
-    const reloadAmount = commUnitPrice;
-    const calculatedTotal = isReload
-      ? reloadAmount
-      : commQuantity * (isUnlistedItem ? commUnitPrice : (matchedItem?.sellingPrice || 0));
-    const discount = isReload ? 0 : Math.max(0, commDiscountPrice || 0);
-    const additionalCost = isReload ? 0 : Math.max(0, commAdditionalCost || 0);
-    const net = Math.max(0, calculatedTotal - discount);
-
     const commissionRate = isReload ? Number(matchedItem?.commissionRate || 4.0) : 0;
     let commissionEarned = 0;
     let actualPrice = 0;
+    let calculatedTotal = 0;
+    let net = 0;
+    const discount = isReload ? 0 : Math.max(0, commDiscountPrice || 0);
+    const additionalCost = isReload ? 0 : Math.max(0, commAdditionalCost || 0);
+
     if (isReload) {
-      commissionEarned = Number(((net * (commissionRate / 100))).toFixed(2));
-      actualPrice = Math.max(0, Number((net - commissionEarned).toFixed(2)));
+      if (commTelecomType === "PACKAGE") {
+        const basePrice = commPackageBasePrice;
+        const sellPrice = commUnitPrice;
+        calculatedTotal = sellPrice;
+        net = sellPrice;
+        // Commission earned from base wholesale price (e.g. 998 * 4% = 39.92)
+        const commFromBase = Number(((basePrice * (commissionRate / 100))).toFixed(2));
+        // Extra markup from selling price above base price (e.g. 1000 - 998 = 2.00)
+        const markup = Math.max(0, Number((sellPrice - basePrice).toFixed(2)));
+        // Total profit = commission from base + markup (e.g. 39.92 + 2 = 41.92)
+        commissionEarned = Number((commFromBase + markup).toFixed(2));
+        // Base wholesale cost charged to reload balance = base price - commission (e.g. 998 - 39.92 = 958.08)
+        actualPrice = Math.max(0, Number((basePrice - commFromBase).toFixed(2)));
+      } else {
+        const reloadAmount = commUnitPrice;
+        calculatedTotal = reloadAmount;
+        net = reloadAmount;
+        commissionEarned = Number(((net * (commissionRate / 100))).toFixed(2));
+        actualPrice = Math.max(0, Number((net - commissionEarned).toFixed(2)));
+      }
     } else {
+      calculatedTotal = commQuantity * (isUnlistedItem ? commUnitPrice : (matchedItem?.sellingPrice || 0));
+      net = Math.max(0, calculatedTotal - discount);
       actualPrice = isUnlistedItem ? commCustomCostPrice : (matchedItem?.actualPrice || 0);
     }
 
@@ -679,13 +729,15 @@ export function FinancesView({
       itemCode,
       itemName,
       actualPrice,
-      sellingPrice: isReload ? reloadAmount : (isUnlistedItem ? commUnitPrice : (matchedItem?.sellingPrice || 0)),
+      sellingPrice: isReload ? commUnitPrice : (isUnlistedItem ? commUnitPrice : (matchedItem?.sellingPrice || 0)),
       quantity: isReload ? 1 : commQuantity,
       totalPrice: calculatedTotal,
       discountPrice: discount,
       additionalCost,
       netAmount: net,
       isTelecomReload: isReload,
+      telecomType: isReload ? commTelecomType : undefined,
+      packageBasePrice: isReload && commTelecomType === "PACKAGE" ? commPackageBasePrice : undefined,
       telecomOperator: operator,
       commissionRate,
       commissionEarned: isReload ? commissionEarned : undefined,
@@ -703,6 +755,8 @@ export function FinancesView({
     setCommUnitPrice(0);
     setCommDiscountPrice(0);
     setCommAdditionalCost(0);
+    setCommTelecomType("CUSTOM");
+    setCommPackageBasePrice(0);
   };
 
   const handleRemoveCartItem = (id: string) => {
@@ -747,19 +801,34 @@ export function FinancesView({
           ? commUnitPrice
           : (matchedItem?.sellingPrice || 0);
 
-      if (itemName && effectiveUnitPrice > 0) {
-        const calculatedTotal = isReload ? effectiveUnitPrice : (commQuantity || 1) * effectiveUnitPrice;
-        const discount = isReload ? 0 : Math.max(0, commDiscountPrice || 0);
-        const additionalCost = isReload ? 0 : Math.max(0, commAdditionalCost || 0);
-        const net = Math.max(0, calculatedTotal - discount);
-
-        const commissionRate = isReload ? Number(matchedItem?.commissionRate || 4.0) : 0;
+      if (itemName && (effectiveUnitPrice > 0 || (isReload && commTelecomType === "PACKAGE" && commPackageBasePrice > 0))) {
+        let calculatedTotal = 0;
+        let net = 0;
         let commissionEarned = 0;
         let actualPrice = 0;
+        const discount = isReload ? 0 : Math.max(0, commDiscountPrice || 0);
+        const additionalCost = isReload ? 0 : Math.max(0, commAdditionalCost || 0);
+        const commissionRate = isReload ? Number(matchedItem?.commissionRate || 4.0) : 0;
+
         if (isReload) {
-          commissionEarned = Number(((net * (commissionRate / 100))).toFixed(2));
-          actualPrice = Math.max(0, Number((net - commissionEarned).toFixed(2)));
+          if (commTelecomType === "PACKAGE") {
+            const basePrice = commPackageBasePrice;
+            const sellPrice = commUnitPrice;
+            calculatedTotal = sellPrice;
+            net = sellPrice;
+            const commFromBase = Number(((basePrice * (commissionRate / 100))).toFixed(2));
+            const markup = Math.max(0, Number((sellPrice - basePrice).toFixed(2)));
+            commissionEarned = Number((commFromBase + markup).toFixed(2));
+            actualPrice = Math.max(0, Number((basePrice - commFromBase).toFixed(2)));
+          } else {
+            calculatedTotal = effectiveUnitPrice;
+            net = effectiveUnitPrice;
+            commissionEarned = Number(((net * (commissionRate / 100))).toFixed(2));
+            actualPrice = Math.max(0, Number((net - commissionEarned).toFixed(2)));
+          }
         } else {
+          calculatedTotal = (commQuantity || 1) * effectiveUnitPrice;
+          net = Math.max(0, calculatedTotal - discount);
           actualPrice = isUnlistedItem ? commCustomCostPrice : (matchedItem?.actualPrice || 0);
         }
 
@@ -769,13 +838,15 @@ export function FinancesView({
           itemCode,
           itemName,
           actualPrice,
-          sellingPrice: effectiveUnitPrice,
+          sellingPrice: isReload ? commUnitPrice : effectiveUnitPrice,
           quantity: isReload ? 1 : (commQuantity || 1),
           totalPrice: calculatedTotal,
           discountPrice: discount,
           additionalCost,
           netAmount: net,
           isTelecomReload: isReload,
+          telecomType: isReload ? commTelecomType : undefined,
+          packageBasePrice: isReload && commTelecomType === "PACKAGE" ? commPackageBasePrice : undefined,
           telecomOperator: isReload ? getTelecomOperator(matchedItem) : null,
           commissionRate,
           commissionEarned: isReload ? commissionEarned : undefined,
@@ -827,6 +898,8 @@ export function FinancesView({
           additionalCost: it.additionalCost || 0,
           amount: it.netAmount,
           isTelecomReload: it.isTelecomReload,
+          telecomType: it.telecomType,
+          packageBasePrice: it.packageBasePrice,
           telecomOperator: it.telecomOperator,
           commissionRate: it.commissionRate,
         })),
@@ -859,6 +932,8 @@ export function FinancesView({
         setCommUnitPrice(0);
         setCommDiscountPrice(0);
         setCommAdditionalCost(0);
+        setCommTelecomType("CUSTOM");
+        setCommPackageBasePrice(0);
         setCommIsRelatedToBranch(false);
         setCommRelatedBranch(null);
         setCommRelatedBranchNote("");
@@ -1075,12 +1150,21 @@ export function FinancesView({
   const columns: ColumnDef<any>[] = [
     {
       accessorKey: "date",
-      header: "Date",
-      cell: ({ row }) => (
-        <span className="font-mono text-xs whitespace-nowrap">
-          {new Date(row.original.date).toLocaleDateString()}
-        </span>
-      ),
+      header: "Date & Time",
+      cell: ({ row }) => {
+        const rawDate = row.original.createdAt || row.original.date;
+        const d = new Date(rawDate);
+        return (
+          <div className="flex flex-col">
+            <span className="font-mono text-xs whitespace-nowrap">
+              {d.toLocaleDateString()}
+            </span>
+            <span className="font-mono text-[10px] text-muted-foreground whitespace-nowrap">
+              {d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: true })}
+            </span>
+          </div>
+        );
+      },
     },
     {
       accessorKey: "billNumber",
@@ -1171,8 +1255,8 @@ export function FinancesView({
                 </span>
                 {r.interBranchSettlementStatus && (
                   <span className={`inline-flex text-[8px] font-mono px-1 py-0.5 rounded border ${r.interBranchSettlementStatus === "SETTLED"
-                      ? "text-emerald-700 dark:text-emerald-300 bg-emerald-500/10 border-emerald-500/20"
-                      : "text-amber-700 dark:text-amber-300 bg-amber-500/10 border-amber-500/20"
+                    ? "text-emerald-700 dark:text-emerald-300 bg-emerald-500/10 border-emerald-500/20"
+                    : "text-amber-700 dark:text-amber-300 bg-amber-500/10 border-amber-500/20"
                     }`}>
                     {r.interBranchSettlementStatus === "SETTLED" ? "Settled" : "Unsettled"}
                   </span>
@@ -1435,8 +1519,8 @@ export function FinancesView({
                     type="button"
                     onClick={() => setCommEntryMode("POS")}
                     className={`flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg transition-all ${commEntryMode === "POS"
-                        ? "bg-primary text-primary-foreground shadow-xs"
-                        : "text-muted-foreground hover:text-foreground hover:bg-background/40"
+                      ? "bg-primary text-primary-foreground shadow-xs"
+                      : "text-muted-foreground hover:text-foreground hover:bg-background/40"
                       }`}
                   >
                     <ShoppingCartIcon className="size-3.5 shrink-0" />
@@ -1452,8 +1536,8 @@ export function FinancesView({
                       await initializeStandardForm();
                     }}
                     className={`flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg transition-all ${commEntryMode === "STANDARD"
-                        ? "bg-primary text-primary-foreground shadow-xs"
-                        : "text-muted-foreground hover:text-foreground hover:bg-background/40"
+                      ? "bg-primary text-primary-foreground shadow-xs"
+                      : "text-muted-foreground hover:text-foreground hover:bg-background/40"
                       }`}
                   >
                     <ReceiptTextIcon className="size-3.5 shrink-0" />
@@ -1544,8 +1628,8 @@ export function FinancesView({
                     {/* Matched Item Preview Card */}
                     {matchedItem && (
                       <div className={`flex items-center justify-between p-2.5 rounded-lg border text-xs ${isTelecomReloadItem(matchedItem)
-                          ? "border-primary/40 bg-primary/10"
-                          : "border-emerald-500/30 bg-emerald-500/10"
+                        ? "border-primary/40 bg-primary/10"
+                        : "border-emerald-500/30 bg-emerald-500/10"
                         }`}>
                         <div className="flex items-center gap-2">
                           {isTelecomReloadItem(matchedItem) ? (
@@ -1638,60 +1722,191 @@ export function FinancesView({
                   </div>
                 )}
 
-                {/* IF TELECOM RELOAD: ALL OTHER FIELDS HIDDEN, ONLY TOTAL RELOAD PRICE ASKED */}
+                {/* IF TELECOM RELOAD: DUAL MODE (CUSTOM RELOAD VS FIXED PACKAGE) */}
                 {isTelecomReloadItem(matchedItem) ? (
                   <div className="space-y-3 pt-2">
-                    <div className="space-y-2 p-3.5 rounded-xl border border-primary/30 bg-primary/5">
-                      <div className="flex items-center justify-between">
-                        <label className="text-xs font-bold text-foreground uppercase flex items-center gap-1.5">
-                          <SmartphoneIcon className="size-4 text-primary" />
-                          <span>Reload Total Price (LKR) *</span>
-                        </label>
-                        <span className="text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 font-mono">
-                          {getTelecomOperator(matchedItem)} Commission: {matchedItem?.commissionRate ?? 4}%
-                        </span>
-                      </div>
-
-                      <Input
-                        type="number"
-                        min="1"
-                        step="any"
-                        placeholder="Enter reload amount (e.g. 50, 100, 200, 500, 1000)..."
-                        value={commUnitPrice || ""}
-                        onChange={(e) => setCommUnitPrice(Math.max(0, Number(e.target.value) || 0))}
-                        className="h-10 text-sm font-mono font-bold text-foreground bg-background"
-                        autoFocus
-                      />
-
-                      {/* Quick Presets */}
-                      <div className="flex flex-wrap items-center gap-1.5 pt-1">
-                        <span className="text-[10px] text-muted-foreground uppercase font-semibold mr-1">Quick Presets:</span>
-                        {[50, 100, 150, 200, 350, 500, 1000, 2000].map((amt) => (
-                          <button
-                            key={amt}
-                            type="button"
-                            onClick={() => setCommUnitPrice(amt)}
-                            className={`px-2.5 py-0.5 rounded text-xs font-mono border transition-all ${commUnitPrice === amt
-                                ? "bg-primary text-primary-foreground border-primary font-bold shadow-xs"
-                                : "bg-background border-border text-foreground hover:bg-muted"
-                              }`}
-                          >
-                            LKR {amt}
-                          </button>
-                        ))}
-                      </div>
+                    {/* Segmented Mode Selector */}
+                    <div className="flex items-center gap-1 p-1 bg-muted/70 rounded-lg border border-border">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCommTelecomType("CUSTOM");
+                        }}
+                        className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 text-xs font-semibold rounded-md transition-all ${commTelecomType === "CUSTOM"
+                            ? "bg-primary text-primary-foreground shadow-xs"
+                            : "text-muted-foreground hover:text-foreground"
+                          }`}
+                      >
+                        <ZapIcon className="size-3.5" />
+                        <span>Custom Reload Top-up</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCommTelecomType("PACKAGE");
+                          if (!commPackageBasePrice && matchedItem?.actualPrice && matchedItem.actualPrice > 0) {
+                            setCommPackageBasePrice(matchedItem.actualPrice);
+                          }
+                          if (!commUnitPrice && matchedItem?.sellingPrice && matchedItem.sellingPrice > 0) {
+                            setCommUnitPrice(matchedItem.sellingPrice);
+                          }
+                        }}
+                        className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 text-xs font-semibold rounded-md transition-all ${commTelecomType === "PACKAGE"
+                            ? "bg-primary text-primary-foreground shadow-xs"
+                            : "text-muted-foreground hover:text-foreground"
+                          }`}
+                      >
+                        <PackageIcon className="size-3.5" />
+                        <span>Fixed Package / Card</span>
+                      </button>
                     </div>
+
+                    {commTelecomType === "CUSTOM" ? (
+                      /* CUSTOM RELOAD AMOUNT MODE */
+                      <div className="space-y-2.5 p-3.5 rounded-xl border border-primary/30 bg-primary/5">
+                        <div className="flex items-center justify-between">
+                          <label className="text-xs font-bold text-foreground uppercase flex items-center gap-1.5">
+                            <SmartphoneIcon className="size-4 text-primary" />
+                            <span>Reload Total Price (LKR) *</span>
+                          </label>
+                          <span className="text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 font-mono">
+                            {getTelecomOperator(matchedItem)} Commission: {matchedItem?.commissionRate ?? 4}%
+                          </span>
+                        </div>
+
+                        <Input
+                          type="number"
+                          min="1"
+                          step="any"
+                          placeholder="Enter reload amount (e.g. 50, 100, 200, 500, 1000)..."
+                          value={commUnitPrice || ""}
+                          onChange={(e) => setCommUnitPrice(Math.max(0, Number(e.target.value) || 0))}
+                          className="h-10 text-sm font-mono font-bold text-foreground bg-background"
+                          autoFocus
+                        />
+
+                        {/* Quick Presets */}
+                        <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                          <span className="text-[10px] text-muted-foreground uppercase font-semibold mr-1">Quick Presets:</span>
+                          {[50, 100, 150, 200, 350, 500, 1000, 2000].map((amt) => (
+                            <button
+                              key={amt}
+                              type="button"
+                              onClick={() => setCommUnitPrice(amt)}
+                              className={`px-2.5 py-0.5 rounded text-xs font-mono border transition-all ${commUnitPrice === amt
+                                  ? "bg-primary text-primary-foreground border-primary font-bold shadow-xs"
+                                  : "bg-background border-border text-foreground hover:bg-muted"
+                                }`}
+                            >
+                              LKR {amt}
+                            </button>
+                          ))}
+                        </div>
+
+                        {commUnitPrice > 0 && (
+                          <div className="flex items-center justify-between pt-1 border-t border-primary/20 text-xs">
+                            <span className="text-muted-foreground">Estimated Profit:</span>
+                            <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400">
+                              +LKR {((commUnitPrice * ((matchedItem?.commissionRate ?? 4) / 100))).toFixed(2)} ({matchedItem?.commissionRate ?? 4}%)
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      /* FIXED PACKAGE / CARD MODE */
+                      <div className="space-y-3 p-3.5 rounded-xl border border-primary/30 bg-primary/5">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold text-foreground uppercase flex items-center gap-1.5">
+                            <PackageIcon className="size-4 text-primary" />
+                            <span>Package Pricing Details</span>
+                          </span>
+                          <span className="text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 font-mono">
+                            {getTelecomOperator(matchedItem)} Base Commission: {matchedItem?.commissionRate ?? 4}%
+                          </span>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div className="space-y-1">
+                            <div className="flex items-center justify-between">
+                              <label className="text-[11px] font-semibold uppercase text-muted-foreground">
+                                Base Unit Price (LKR) *
+                              </label>
+                              <span className="text-[10px] text-muted-foreground">Package Face Value</span>
+                            </div>
+                            <Input
+                              type="number"
+                              min="1"
+                              step="any"
+                              placeholder="e.g. 998"
+                              value={commPackageBasePrice || ""}
+                              onChange={(e) => setCommPackageBasePrice(Math.max(0, Number(e.target.value) || 0))}
+                              className="h-9 text-xs font-mono font-bold bg-background"
+                              autoFocus
+                            />
+                          </div>
+
+                          <div className="space-y-1">
+                            <div className="flex items-center justify-between">
+                              <label className="text-[11px] font-semibold uppercase text-muted-foreground">
+                                Selling Price (LKR) *
+                              </label>
+                              <span className="text-[10px] text-muted-foreground">Customer Due</span>
+                            </div>
+                            <Input
+                              type="number"
+                              min="1"
+                              step="any"
+                              placeholder="e.g. 1000"
+                              value={commUnitPrice || ""}
+                              onChange={(e) => setCommUnitPrice(Math.max(0, Number(e.target.value) || 0))}
+                              className="h-9 text-xs font-mono font-bold bg-background"
+                            />
+                          </div>
+                        </div>
+
+                        {/* Common Package Presets */}
+                        <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                          <span className="text-[10px] text-muted-foreground uppercase font-semibold mr-1">Common Packages:</span>
+                          {[
+                            { name: "998 → 1000", base: 998, sell: 1000 },
+                            { name: "498 → 500", base: 498, sell: 500 },
+                            { name: "1198 → 1200", base: 1198, sell: 1200 },
+                            { name: "1498 → 1500", base: 1498, sell: 1500 },
+                            { name: "1998 → 2000", base: 1998, sell: 2000 },
+                          ].map((pkg) => (
+                            <button
+                              key={pkg.name}
+                              type="button"
+                              onClick={() => {
+                                setCommPackageBasePrice(pkg.base);
+                                setCommUnitPrice(pkg.sell);
+                              }}
+                              className={`px-2 py-0.5 rounded text-[11px] font-mono border transition-all ${commPackageBasePrice === pkg.base && commUnitPrice === pkg.sell
+                                  ? "bg-primary text-primary-foreground border-primary font-bold shadow-xs"
+                                  : "bg-background border-border text-foreground hover:bg-muted"
+                                }`}
+                            >
+                              {pkg.name}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
 
                     <div className="flex justify-end pt-1">
                       <Button
                         type="button"
                         onClick={handleAddItemToCart}
                         size="sm"
-                        disabled={!commUnitPrice || commUnitPrice <= 0}
+                        disabled={
+                          commTelecomType === "PACKAGE"
+                            ? !commPackageBasePrice || commPackageBasePrice <= 0 || !commUnitPrice || commUnitPrice <= 0
+                            : !commUnitPrice || commUnitPrice <= 0
+                        }
                         className="gap-1.5 text-xs font-semibold"
                       >
                         <PlusCircleIcon className="size-3.5" />
-                        Add Reload to Sale
+                        {commTelecomType === "PACKAGE" ? "Add Package to Sale" : "Add Reload to Sale"}
                       </Button>
                     </div>
                   </div>
@@ -1820,7 +2035,7 @@ export function FinancesView({
                                 <span>{item.itemName}</span>
                                 {item.isTelecomReload && (
                                   <Badge variant="outline" className="text-[9px] px-1.5 py-0 font-mono bg-primary/10 text-primary border-primary/30">
-                                    {item.telecomOperator || "RELOAD"} {item.commissionRate ? `(${item.commissionRate}%)` : ""}
+                                    {item.telecomType === "PACKAGE" ? "PACKAGE" : "RELOAD"} {item.telecomOperator || ""} {item.commissionRate ? `(${item.commissionRate}%)` : ""}
                                   </Badge>
                                 )}
                               </div>
@@ -1829,6 +2044,7 @@ export function FinancesView({
                                 {item.isTelecomReload && item.commissionEarned !== undefined && (
                                   <span className="text-emerald-600 dark:text-emerald-400 font-semibold">
                                     • Profit: +LKR {Number(item.commissionEarned).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                    {item.telecomType === "PACKAGE" && item.packageBasePrice ? ` (Base: LKR ${item.packageBasePrice})` : ""}
                                   </span>
                                 )}
                                 {item.additionalCost !== undefined && item.additionalCost > 0 && (
@@ -2275,57 +2491,6 @@ export function FinancesView({
                   )}
                 </div>
 
-                {/* Related to Another Branch (Inter-Branch Cost/Transfer) */}
-                {!createForm.watch("isCrossBranchPayment") && (
-                  <div className="p-3 rounded-lg border border-border bg-muted/20 space-y-2">
-                    <label className="text-xs font-semibold text-foreground flex items-center gap-2 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        {...createForm.register("isRelatedToBranch")}
-                        className="rounded border-input text-primary focus:ring-primary size-4"
-                      />
-                      <span>Related to Another Branch (Inter-Branch Cost/Transfer)</span>
-                    </label>
-                    <p className="text-[11px] text-muted-foreground">
-                      Check this if this expense or transaction was incurred for another branch.
-                    </p>
-
-                    {createForm.watch("isRelatedToBranch") && (
-                      <div className="pt-2 border-t border-border space-y-2">
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                          <div className="space-y-1">
-                            <label className="text-xs font-semibold text-foreground">
-                              Related Branch
-                            </label>
-                            <select
-                              {...createForm.register("relatedBranch")}
-                              className="w-full h-9 rounded-md border border-border bg-card text-foreground px-3 text-xs font-medium outline-none focus:border-ring [color-scheme:light] dark:[color-scheme:dark]"
-                            >
-                              <option value="">Select Related Branch...</option>
-                              {activeShops
-                                .filter((s) => s._id !== userShopId)
-                                .map((s) => (
-                                  <option key={s._id} value={s._id}>
-                                    {s.name} ({s.code})
-                                  </option>
-                                ))}
-                            </select>
-                          </div>
-                          <div className="space-y-1">
-                            <label className="text-xs font-semibold text-foreground">
-                              Transfer Note
-                            </label>
-                            <Input
-                              placeholder="Reason / Note..."
-                              {...createForm.register("relatedBranchNote")}
-                              className="h-9 text-xs"
-                            />
-                          </div>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                )}
 
                 <DialogFooter className="pt-2">
                   <Button type="button" variant="outline" size="sm" onClick={() => setCreateOpen(false)}>

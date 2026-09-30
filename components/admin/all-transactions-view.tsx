@@ -282,6 +282,7 @@ export function AllTransactionsView({
 
     const headers = [
       "Date",
+      "Time",
       "Branch",
       "Branch Type",
       "Bill Number",
@@ -305,7 +306,8 @@ export function AllTransactionsView({
     ];
 
     const rows = records.map((r) => [
-      new Date(r.date).toISOString().split("T")[0],
+      new Date(r.createdAt || r.date).toLocaleDateString(),
+      new Date(r.createdAt || r.date).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
       r.shop?.name || "N/A",
       r.shop?.shopType || "STANDARD",
       r.billNumber || "",
@@ -358,12 +360,21 @@ export function AllTransactionsView({
   const columns: ColumnDef<any>[] = [
     {
       accessorKey: "date",
-      header: "Date",
-      cell: ({ row }) => (
-        <span className="font-mono text-xs whitespace-nowrap">
-          {new Date(row.original.date).toLocaleDateString()}
-        </span>
-      ),
+      header: "Date & Time",
+      cell: ({ row }) => {
+        const rawDate = row.original.createdAt || row.original.date;
+        const d = new Date(rawDate);
+        return (
+          <div className="flex flex-col">
+            <span className="font-mono text-xs whitespace-nowrap">
+              {d.toLocaleDateString()}
+            </span>
+            <span className="font-mono text-[10px] text-muted-foreground whitespace-nowrap">
+              {d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: true })}
+            </span>
+          </div>
+        );
+      },
     },
     {
       accessorKey: "shop.name",
