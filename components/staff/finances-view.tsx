@@ -195,7 +195,7 @@ export function FinancesView({
 
   // Filters
   const [statusFilter, setStatusFilter] = React.useState("ALL");
-  const [categoryFilter, setCategoryFilter] = React.useState("ALL");
+  const [categoryFilter, setCategoryFilter] = React.useState("ALL");  // "ALL" | "COMM" | "GENERAL" | <categoryId>
 
   // Modals
   const [createOpen, setCreateOpen] = React.useState(false);
@@ -536,10 +536,17 @@ export function FinancesView({
 
   const refreshRecords = async () => {
     setLoading(true);
-    const res = await getFinanceRecordsAction({
+    const params: Parameters<typeof getFinanceRecordsAction>[0] = {
       status: statusFilter !== "ALL" ? statusFilter : undefined,
-      categoryId: categoryFilter !== "ALL" ? categoryFilter : undefined,
-    });
+    };
+    if (categoryFilter === "COMM") {
+      params.isCommunicationItem = true;
+    } else if (categoryFilter === "GENERAL") {
+      params.isCommunicationItem = false;
+    } else if (categoryFilter !== "ALL") {
+      params.categoryId = categoryFilter;
+    }
+    const res = await getFinanceRecordsAction(params);
     if (res.success && res.records) {
       setRecords(res.records);
     }
@@ -1178,14 +1185,19 @@ export function FinancesView({
     {
       accessorKey: "category.name",
       header: "Category",
-      cell: ({ row }) => (
-        <div className="max-w-[150px] min-w-0">
-          <CategoryBadge
-            name={row.original.category?.name || "Uncategorized"}
-            colorToken={row.original.category?.colorToken}
-          />
-        </div>
-      ),
+      cell: ({ row }) => {
+        const rec = row.original;
+        const catName = rec.category?.name || (rec.isCommunicationItem ? "Communication Sale" : "Uncategorized");
+        const colorToken = rec.category?.colorToken || (rec.isCommunicationItem ? "chart-1" : undefined);
+        return (
+          <div className="max-w-[160px] min-w-0 flex flex-col gap-0.5">
+            <CategoryBadge name={catName} colorToken={colorToken} />
+            {rec.isCommunicationItem && (
+              <span className="text-[10px] text-muted-foreground font-mono leading-none">📱 Comm Item</span>
+            )}
+          </div>
+        );
+      },
     },
     {
       accessorKey: "paymentMethod",
@@ -1483,7 +1495,11 @@ export function FinancesView({
           onChange={(e) => setCategoryFilter(e.target.value)}
           className="h-9 rounded-md border border-border bg-card text-foreground px-3 text-xs font-medium outline-none focus:border-ring [color-scheme:light] dark:[color-scheme:dark]"
         >
-          <option value="ALL" className="bg-white text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100">All Categories</option>
+          <option value="ALL" className="bg-white text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100">All Records</option>
+          {isCommShop && (
+            <option value="COMM" className="bg-white text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100">📱 Communication Sales</option>
+          )}
+          <option value="GENERAL" className="bg-white text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100">📋 General Transactions</option>
           {categories.map((c) => (
             <option key={c._id} value={c._id} className="bg-white text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100">
               {c.name}

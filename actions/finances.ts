@@ -33,6 +33,7 @@ interface GetFinanceRecordsParams {
   search?: string;
   page?: number;
   limit?: number;
+  isCommunicationItem?: boolean;
 }
 
 export async function getFinanceRecordsAction(params: GetFinanceRecordsParams = {}) {
@@ -76,6 +77,10 @@ export async function getFinanceRecordsAction(params: GetFinanceRecordsParams = 
 
     if (params.categoryId && params.categoryId !== "ALL") {
       query.category = new mongoose.Types.ObjectId(params.categoryId);
+    }
+
+    if (params.isCommunicationItem !== undefined) {
+      query.isCommunicationItem = params.isCommunicationItem;
     }
 
     if (params.status && params.status !== "ALL") {
