@@ -339,3 +339,206 @@ export async function adminDeleteTransactionAction(formData: unknown) {
     return { success: false, error: "Failed to delete transaction." };
   }
 }
+
+export async function adminGetBulkDeleteEligibleCountAction(params: AdminTransactionsFilterParams = {}) {
+  const session = await auth();
+  if (!session?.user?.id || !isAdmin(session.user as any)) {
+    return { success: false, error: "Unauthorized. Admin privileges required." };
+  }
+
+  try {
+    await connectDB();
+
+    const OCT_01_2026 = new Date("2026-10-01T00:00:00.000Z");
+
+    const query: Record<string, unknown> = {};
+
+    const dateFilter: Record<string, unknown> = {
+      $lt: OCT_01_2026,
+    };
+
+    if (params.startDate) {
+      dateFilter.$gte = new Date(params.startDate);
+    }
+
+    if (params.endDate) {
+      const end = new Date(params.endDate);
+      end.setHours(23, 59, 59, 999);
+      if (end < OCT_01_2026) {
+        dateFilter.$lte = end;
+      }
+    }
+
+    query.date = dateFilter;
+
+    if (params.shopId && params.shopId !== "ALL") {
+      query.shop = new mongoose.Types.ObjectId(params.shopId);
+    }
+    if (params.type && params.type !== "ALL") {
+      query.type = params.type;
+    }
+    if (params.paymentMethod && params.paymentMethod !== "ALL") {
+      query.paymentMethod = params.paymentMethod;
+    }
+    if (params.bankAccountId && params.bankAccountId !== "ALL") {
+      query.bankAccount = new mongoose.Types.ObjectId(params.bankAccountId);
+    }
+    if (params.categoryId && params.categoryId !== "ALL") {
+      query.category = new mongoose.Types.ObjectId(params.categoryId);
+    }
+    if (params.status && params.status !== "ALL") {
+      query.status = params.status;
+    }
+    if (params.search && params.search.trim().length > 0) {
+      const cleanSearch = sanitizeInput(params.search.trim());
+      query.$or = [
+        { billNumber: { $regex: cleanSearch, $options: "i" } },
+        { reason: { $regex: cleanSearch, $options: "i" } },
+        { itemCode: { $regex: cleanSearch, $options: "i" } },
+      ];
+    }
+
+    const count = await FinanceRecord.countDocuments(query);
+    return { success: true, count };
+  } catch (error) {
+    console.error("Get bulk delete eligible count error:", error);
+    return { success: false, error: "Failed to count eligible records." };
+  }
+}
+
+export async function adminBulkPermanentDeleteTransactionsAction(params: {
+  shopId?: string;
+  type?: string;
+  paymentMethod?: string;
+  bankAccountId?: string;
+  categoryId?: string;
+  status?: string;
+  startDate?: string;
+  endDate?: string;
+  search?: string;
+  confirmationPhrase: string;
+}) {
+  const session = await auth();
+  if (!session?.user?.id || !isAdmin(session.user as any)) {
+    return { success: false, error: "Unauthorized. Admin privileges required." };
+  }
+
+  if (params.confirmationPhrase !== "PERMANENT DELETE") {
+    return { success: false, error: 'Confirmation phrase mismatch. Please enter "PERMANENT DELETE".' };
+  }
+
+  try {
+    await connectDB();
+
+    // STRICT SAFETY RULE:
+    // Only records strictly prior to October 01, 2026 can be deleted.
+    // Records on or after October 01, 2026 are protected and cannot be deleted.
+    const OCT_01_2026 = new Date("2026-10-01T00:00:00.000Z");
+
+    const query: Record<string, unknown> = {};
+
+    const dateFilter: Record<string, unknown> = {
+      $lt: OCT_01_2026,
+    };
+
+    if (params.startDate) {
+      dateFilter.$gte = new Date(params.startDate);
+    }
+
+    if (params.endDate) {
+      const end = new Date(params.endDate);
+      end.setHours(23, 59, 59, 999);
+      if (end < OCT_01_2026) {
+        dateFilter.$lte = end;
+      }
+    }
+
+    query.date = dateFilter;
+
+    if (params.shopId && params.shopId !== "ALL") {
+      query.shop = new mongoose.Types.ObjectId(params.shopId);
+    }
+    if (params.type && params.type !== "ALL") {
+      query.type = params.type;
+    }
+    if (params.paymentMethod && params.paymentMethod !== "ALL") {
+      query.paymentMethod = params.paymentMethod;
+    }
+    if (params.bankAccountId && params.bankAccountId !== "ALL") {
+      query.bankAccount = new mongoose.Types.ObjectId(params.bankAccountId);
+    }
+    if (params.categoryId && params.categoryId !== "ALL") {
+      query.category = new mongoose.Types.ObjectId(params.categoryId);
+    }
+    if (params.status && params.status !== "ALL") {
+      query.status = params.status;
+    }
+    if (params.search && params.search.trim().length > 0) {
+      const cleanSearch = sanitizeInput(params.search.trim());
+      query.$or = [
+        { billNumber: { $regex: cleanSearch, $options: "i" } },
+        { reason: { $regex: cleanSearch, $options: "i" } },
+        { itemCode: { $regex: cleanSearch, $options: "i" } },
+      ];
+    }
+
+    // Find affected records first to capture affected shops and earliest date
+    const recordsToDelete = await FinanceRecord.find(query)
+      .select("_id shop date billNumber")
+      .lean();
+
+    if (recordsToDelete.length === 0) {
+      return {
+        success: false,
+        error: "No eligible records found matching the filter (dated prior to October 01, 2026).",
+      };
+    }
+
+    const shopEarliestDates = new Map<string, Date>();
+    for (const r of recordsToDelete) {
+      if (r.shop) {
+        const sId = r.shop.toString();
+        const existing = shopEarliestDates.get(sId);
+        const rDate = new Date(r.date);
+        if (!existing || rDate < existing) {
+          shopEarliestDates.set(sId, rDate);
+        }
+      }
+    }
+
+    // Execute HARD permanent delete
+    const deleteResult = await FinanceRecord.deleteMany(query);
+
+    // Reconcile and recalculate shop running balances
+    for (const [sId, earliestDate] of shopEarliestDates.entries()) {
+      try {
+        await recalculateShopRunningBalance(new mongoose.Types.ObjectId(sId), earliestDate);
+      } catch (balErr) {
+        console.error(`Failed to recalculate balance for shop ${sId}:`, balErr);
+      }
+    }
+
+    // Write audit event
+    await logAuditEvent({
+      actorId: session.user.id,
+      action: "ADMIN_BULK_PERMANENT_DELETE",
+      targetType: "FinanceRecord",
+      targetId: new mongoose.Types.ObjectId(),
+      metadata: {
+        deletedCount: deleteResult.deletedCount,
+        queryDateFilter: dateFilter,
+        affectedShopsCount: shopEarliestDates.size,
+      },
+    });
+
+    return {
+      success: true,
+      deletedCount: deleteResult.deletedCount,
+      message: `Successfully permanently deleted ${deleteResult.deletedCount} transaction records prior to October 01, 2026. Shop running balances recalculated.`,
+    };
+  } catch (error) {
+    console.error("Bulk permanent delete error:", error);
+    return { success: false, error: "Failed to permanently delete records." };
+  }
+}
+

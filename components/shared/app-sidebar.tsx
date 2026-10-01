@@ -47,6 +47,7 @@ import {
   HistoryIcon,
   ArrowLeftRightIcon,
   Loader2Icon,
+  PackageIcon,
 } from "lucide-react";
 
 interface AppSidebarProps {
@@ -140,11 +141,21 @@ export function AppSidebar({ user }: AppSidebarProps) {
     { title: "My Settings", href: "/dashboard/admin/settings", icon: SettingsIcon },
   ];
 
-  const staffNav = [
-    { title: "Dashboard", href: "/dashboard/staff/dashboard", icon: LayoutDashboardIcon },
-    { title: "Finances & Entries", href: "/dashboard/staff/finances", icon: ReceiptIcon },
-    { title: "My Settings", href: "/dashboard/staff/settings", icon: SettingsIcon },
-  ];
+  const currentShopId = selectedShopId || user.shop;
+  const activeShop = user.shops?.find((s) => s._id === currentShopId);
+  const isInventoryShop = activeShop?.shopType === "INVENTORY";
+
+  const staffNav = isInventoryShop
+    ? [
+        { title: "Dashboard", href: "/dashboard/staff/dashboard", icon: LayoutDashboardIcon },
+        { title: "Inventory Management", href: "/dashboard/staff/inventory", icon: PackageIcon },
+        { title: "My Settings", href: "/dashboard/staff/settings", icon: SettingsIcon },
+      ]
+    : [
+        { title: "Dashboard", href: "/dashboard/staff/dashboard", icon: LayoutDashboardIcon },
+        { title: "Finances & Entries", href: "/dashboard/staff/finances", icon: ReceiptIcon },
+        { title: "My Settings", href: "/dashboard/staff/settings", icon: SettingsIcon },
+      ];
 
   const verifierNav = [
     { title: "Dashboard", href: "/dashboard/verifier/dashboard", icon: LayoutDashboardIcon },

@@ -244,6 +244,13 @@ export async function createFinanceRecordAction(formData: unknown) {
       return { success: false, error: "Invalid or inactive shop." };
     }
 
+    if (shop.shopType === "INVENTORY") {
+      return {
+        success: false,
+        error: "This branch is configured for Inventory Management only. Financial cash ledger transactions are not recorded for inventory shops.",
+      };
+    }
+
     const category = await Category.findById(result.data.category);
     if (!category || !category.isActive) {
       return { success: false, error: "Invalid or inactive category." };

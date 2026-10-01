@@ -9,7 +9,7 @@ export const createShopSchema = z.object({
     .toUpperCase(),
   description: z.string().optional().or(z.literal("")),
   address: z.string().optional().or(z.literal("")),
-  shopType: z.enum(["STANDARD", "COMMUNICATION"]),
+  shopType: z.enum(["STANDARD", "COMMUNICATION", "INVENTORY"]),
 });
 
 export type CreateShopInput = z.infer<typeof createShopSchema>;
@@ -23,7 +23,7 @@ export const updateShopSchema = z.object({
     .toUpperCase(),
   description: z.string().optional().or(z.literal("")),
   address: z.string().optional().or(z.literal("")),
-  shopType: z.enum(["STANDARD", "COMMUNICATION"]),
+  shopType: z.enum(["STANDARD", "COMMUNICATION", "INVENTORY"]),
   isActive: z.boolean(),
 });
 

@@ -69,7 +69,7 @@ interface ShopItem {
   code: string;
   description?: string;
   address?: string;
-  shopType?: "STANDARD" | "COMMUNICATION";
+  shopType?: "STANDARD" | "COMMUNICATION" | "INVENTORY";
   isActive: boolean;
   staffCount: number;
   recordsCount: number;
@@ -225,6 +225,11 @@ export function ShopsView({ initialShops }: { initialShops: ShopItem[] }) {
                 COMMUNICATION
               </Badge>
             )}
+            {row.original.shopType === "INVENTORY" && (
+              <Badge variant="secondary" className="text-[9px] px-1.5 py-0 font-mono">
+                📦 INVENTORY
+              </Badge>
+            )}
           </div>
           <span className="text-[11px] text-muted-foreground truncate max-w-xs">
             {row.original.address || "No address specified"}
@@ -246,6 +251,13 @@ export function ShopsView({ initialShops }: { initialShops: ShopItem[] }) {
       accessorKey: "currentBalance",
       header: "Cash Balance",
       cell: ({ row }) => {
+        if (row.original.shopType === "INVENTORY") {
+          return (
+            <span className="text-[11px] text-muted-foreground italic">
+              Inventory Only (No Ledger)
+            </span>
+          );
+        }
         const bal = row.original.currentBalance || 0;
         const credit = row.original.totalCustomerCredit || 0;
         const isComm = row.original.shopType === "COMMUNICATION";
@@ -391,6 +403,7 @@ export function ShopsView({ initialShops }: { initialShops: ShopItem[] }) {
                 <SelectContent>
                   <SelectItem value="STANDARD">Standard Educational Branch</SelectItem>
                   <SelectItem value="COMMUNICATION">Communication & Retail Shop</SelectItem>
+                  <SelectItem value="INVENTORY">Inventory Management Shop</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -449,6 +462,7 @@ export function ShopsView({ initialShops }: { initialShops: ShopItem[] }) {
                 <SelectContent>
                   <SelectItem value="STANDARD">Standard Educational Branch</SelectItem>
                   <SelectItem value="COMMUNICATION">Communication & Retail Shop</SelectItem>
+                  <SelectItem value="INVENTORY">Inventory Management Shop</SelectItem>
                 </SelectContent>
               </Select>
             </div>

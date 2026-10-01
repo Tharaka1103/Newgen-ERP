@@ -18,6 +18,7 @@ import {
 } from "@/actions/credit";
 import { settleInterBranchCashAction, getUtilityBillAnalyticsAction } from "@/actions/finances";
 import { getActiveBankAccountsAction } from "@/actions/bankAccounts";
+import { InventoryView } from "@/components/inventory/inventory-view";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
@@ -123,7 +124,7 @@ interface SingleShopViewProps {
     code: string;
     description?: string;
     address?: string;
-    shopType?: "STANDARD" | "COMMUNICATION";
+    shopType?: "STANDARD" | "COMMUNICATION" | "INVENTORY";
     isActive: boolean;
   };
   initialStaff: AssignedStaff[];
@@ -163,6 +164,7 @@ export function SingleShopView({
   initialStats,
 }: SingleShopViewProps) {
   const isCommunication = initialShop.shopType === "COMMUNICATION";
+  const isInventoryShop = initialShop.shopType === "INVENTORY";
 
   const [activeTab, setActiveTab] = React.useState<"overview" | "itemSales" | "items" | "utilityBills" | "wastage" | "credits" | "staff">("overview");
   const [period, setPeriod] = React.useState<"today" | "week" | "month" | "year" | "custom">("month");
@@ -1721,6 +1723,70 @@ export function SingleShopView({
       ),
     },
   ];
+
+  if (isInventoryShop) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <Button
+            render={<Link href="/dashboard/admin/shops" />}
+            variant="ghost"
+            size="sm"
+            className="gap-1.5 text-xs text-muted-foreground hover:text-foreground pl-0"
+          >
+            <ArrowLeftIcon className="size-3.5" />
+            Back to All Branches
+          </Button>
+        </div>
+
+        <Tabs defaultValue="inventory" className="space-y-6">
+          <div className="flex items-center justify-between border-b border-border pb-2">
+            <TabsList className="bg-muted">
+              <TabsTrigger value="inventory" className="text-xs gap-1.5">
+                <PackageIcon className="size-3.5" />
+                <span>Inventory &amp; Dashboard</span>
+              </TabsTrigger>
+              <TabsTrigger value="staff" className="text-xs gap-1.5">
+                <UsersIcon className="size-3.5" />
+                <span>Assigned Officers ({staff.length})</span>
+              </TabsTrigger>
+            </TabsList>
+          </div>
+
+          <TabsContent value="inventory" className="space-y-6 mt-0">
+            <InventoryView
+              shopId={shop._id}
+              shopName={shop.name}
+              shopCode={shop.code}
+            />
+          </TabsContent>
+
+          <TabsContent value="staff" className="space-y-4 mt-0">
+            <div className="rounded-xl border border-border bg-card p-4 space-y-3 shadow-sm">
+              <h3 className="text-sm font-semibold text-foreground">Assigned Officers ({staff.length})</h3>
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {staff.map((stf) => (
+                  <div key={stf._id} className="rounded-lg border border-border p-3 space-y-1">
+                    <div className="flex items-center justify-between">
+                      <span className="font-semibold text-xs text-foreground">{stf.name}</span>
+                      <Badge variant="outline" className="text-[10px]">Officer</Badge>
+                    </div>
+                    <p className="text-xs text-muted-foreground">{stf.email}</p>
+                    {stf.phone && <p className="text-[11px] text-muted-foreground">Phone: {stf.phone}</p>}
+                  </div>
+                ))}
+                {staff.length === 0 && (
+                  <div className="col-span-full text-center text-xs text-muted-foreground p-6">
+                    No officers currently assigned to this branch.
+                  </div>
+                )}
+              </div>
+            </div>
+          </TabsContent>
+        </Tabs>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">

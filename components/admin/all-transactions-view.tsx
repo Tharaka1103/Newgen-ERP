@@ -5,6 +5,8 @@ import {
   getAllTransactionsAdminAction,
   adminEditTransactionAction,
   adminDeleteTransactionAction,
+  adminBulkPermanentDeleteTransactionsAction,
+  adminGetBulkDeleteEligibleCountAction,
 } from "@/actions/adminTransactions";
 import { DataTable } from "@/components/shared/data-table";
 import { ColumnDef } from "@tanstack/react-table";
@@ -124,6 +126,13 @@ export function AllTransactionsView({
   const [deleteConfirmRecord, setDeleteConfirmRecord] = React.useState<any | null>(null);
   const [deletionReason, setDeletionReason] = React.useState("");
   const [isDeleting, setIsDeleting] = React.useState(false);
+
+  // Bulk Delete State
+  const [bulkDeleteOpen, setBulkDeleteOpen] = React.useState(false);
+  const [bulkDeleteCount, setBulkDeleteCount] = React.useState<number | null>(null);
+  const [bulkDeleteConfirmation, setBulkDeleteConfirmation] = React.useState("");
+  const [isBulkDeleting, setIsBulkDeleting] = React.useState(false);
+  const [isCheckingEligible, setIsCheckingEligible] = React.useState(false);
 
   const editForm = useForm<AdminEditFinanceRecordInput>({
     resolver: zodResolver(adminEditFinanceRecordSchema),
@@ -268,6 +277,77 @@ export function AllTransactionsView({
       });
     }
     setIsDeleting(false);
+  };
+
+  const handleOpenBulkDelete = async () => {
+    setIsCheckingEligible(true);
+    const res = await adminGetBulkDeleteEligibleCountAction({
+      shopId: shopFilter !== "ALL" ? shopFilter : undefined,
+      type: typeFilter !== "ALL" ? typeFilter : undefined,
+      paymentMethod: paymentMethodFilter !== "ALL" ? paymentMethodFilter : undefined,
+      bankAccountId: bankAccountFilter !== "ALL" ? bankAccountFilter : undefined,
+      categoryId: categoryFilter !== "ALL" ? categoryFilter : undefined,
+      status: statusFilter !== "ALL" ? statusFilter : undefined,
+      startDate: startDate || undefined,
+      endDate: endDate || undefined,
+      search: search.trim() || undefined,
+    });
+    setIsCheckingEligible(false);
+
+    if (res.success && typeof res.count === "number") {
+      setBulkDeleteCount(res.count);
+      setBulkDeleteConfirmation("");
+      setBulkDeleteOpen(true);
+    } else {
+      toast.create({
+        title: "Check Failed",
+        description: res.error || "Unable to check eligible records for deletion.",
+        type: "error",
+      });
+    }
+  };
+
+  const handleBulkDeleteSubmit = async () => {
+    if (bulkDeleteConfirmation !== "PERMANENT DELETE") {
+      toast.create({
+        title: "Confirmation Required",
+        description: 'Please type "PERMANENT DELETE" exactly to confirm.',
+        type: "error",
+      });
+      return;
+    }
+
+    setIsBulkDeleting(true);
+    const res = await adminBulkPermanentDeleteTransactionsAction({
+      shopId: shopFilter !== "ALL" ? shopFilter : undefined,
+      type: typeFilter !== "ALL" ? typeFilter : undefined,
+      paymentMethod: paymentMethodFilter !== "ALL" ? paymentMethodFilter : undefined,
+      bankAccountId: bankAccountFilter !== "ALL" ? bankAccountFilter : undefined,
+      categoryId: categoryFilter !== "ALL" ? categoryFilter : undefined,
+      status: statusFilter !== "ALL" ? statusFilter : undefined,
+      startDate: startDate || undefined,
+      endDate: endDate || undefined,
+      search: search.trim() || undefined,
+      confirmationPhrase: bulkDeleteConfirmation,
+    });
+
+    if (res.success) {
+      toast.create({
+        title: "Permanent Deletion Complete",
+        description: res.message,
+        type: "success",
+      });
+      setBulkDeleteOpen(false);
+      setBulkDeleteConfirmation("");
+      fetchRecords(1);
+    } else {
+      toast.create({
+        title: "Deletion Failed",
+        description: res.error || "Could not permanently delete records.",
+        type: "error",
+      });
+    }
+    setIsBulkDeleting(false);
   };
 
   const handleExportCSV = () => {
@@ -787,7 +867,23 @@ export function AllTransactionsView({
             </div>
           </div>
 
-          <div className="flex justify-end pt-1">
+          <div className="flex items-center justify-between pt-1 flex-wrap gap-2">
+            <Button
+              type="button"
+              variant="destructive"
+              size="sm"
+              onClick={handleOpenBulkDelete}
+              disabled={loading || isCheckingEligible}
+              className="h-8 px-3 text-xs font-semibold gap-1.5"
+            >
+              {isCheckingEligible ? (
+                <Loader2Icon className="size-3.5 animate-spin" />
+              ) : (
+                <Trash2Icon className="size-3.5" />
+              )}
+              <span>Delete Filtered Records (Permanently)</span>
+            </Button>
+
             <Button
               size="sm"
               onClick={handleApplyFilters}
@@ -1071,23 +1167,22 @@ export function AllTransactionsView({
               <Trash2Icon className="size-4" />
               Delete Transaction Permanently?
             </AlertDialogTitle>
-            <AlertDialogDescription className="space-y-2">
-              <p>
-                You are about to soft-delete transaction{" "}
-                <strong className="text-foreground font-mono">
-                  {deleteConfirmRecord?.billNumber}
-                </strong>{" "}
-                amounting to{" "}
-                <strong className="text-foreground font-mono">
-                  LKR {Number(deleteConfirmRecord?.amount || 0).toLocaleString()}
-                </strong>
-                .
-              </p>
-              <p className="text-xs text-amber-600 dark:text-amber-400 font-medium">
-                This will reverse any impact on the branch running balance, petty cash float, or bank balance, and create an immutable audit record.
-              </p>
+            <AlertDialogDescription>
+              You are about to soft-delete transaction{" "}
+              <span className="font-mono font-semibold text-foreground">
+                {deleteConfirmRecord?.billNumber}
+              </span>{" "}
+              amounting to{" "}
+              <span className="font-mono font-semibold text-foreground">
+                LKR {Number(deleteConfirmRecord?.amount || 0).toLocaleString()}
+              </span>
+              .
             </AlertDialogDescription>
           </AlertDialogHeader>
+
+          <p className="text-xs text-amber-600 dark:text-amber-400 font-medium">
+            This will reverse any impact on the branch running balance, petty cash float, or bank balance, and create an immutable audit record.
+          </p>
 
           <div className="space-y-1.5 py-2">
             <label className="text-xs font-semibold text-foreground uppercase">
@@ -1111,6 +1206,106 @@ export function AllTransactionsView({
               {isDeleting ? <Loader2Icon className="size-3.5 animate-spin mr-1" /> : null}
               Confirm Safe Delete
             </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* BULK PERMANENT DELETE DIALOG */}
+      <AlertDialog
+        open={bulkDeleteOpen}
+        onOpenChange={(open) => {
+          if (!open && !isBulkDeleting) {
+            setBulkDeleteOpen(false);
+            setBulkDeleteConfirmation("");
+          }
+        }}
+      >
+        <AlertDialogContent className="sm:max-w-md">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2 text-destructive">
+              <Trash2Icon className="size-5" />
+              <span>Permanently Delete Filtered Transactions</span>
+            </AlertDialogTitle>
+            <AlertDialogDescription className="text-xs">
+              Permanently remove matching transactions dated prior to October 01, 2026.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+
+          <div className="space-y-3 py-1 text-xs">
+            <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 space-y-1.5 text-foreground">
+              <div className="font-semibold text-destructive flex items-center gap-1.5">
+                <ShieldAlertIcon className="size-4 shrink-0" />
+                <span>Permanent Action (Hard Delete)</span>
+              </div>
+              <p className="text-muted-foreground leading-relaxed">
+                This action will <strong className="text-destructive">PERMANENTLY remove</strong> all matching transactions dated prior to October 01, 2026.
+              </p>
+              <div className="text-[11px] font-medium text-primary bg-background/80 px-2.5 py-1.5 rounded border border-border/60">
+                🛡️ <strong>Safety Protection:</strong> Transactions on or after October 01, 2026 (today) are strictly preserved and cannot be deleted.
+              </div>
+            </div>
+
+            <div className="space-y-1 border-t border-border/60 pt-2 text-muted-foreground">
+              <div className="flex justify-between">
+                <span>Eligible records to delete:</span>
+                <span className="font-mono font-bold text-destructive">{bulkDeleteCount ?? 0}</span>
+              </div>
+              {startDate && (
+                <div className="flex justify-between">
+                  <span>From Date:</span>
+                  <span className="font-mono text-foreground">{startDate}</span>
+                </div>
+              )}
+              {endDate && (
+                <div className="flex justify-between">
+                  <span>To Date:</span>
+                  <span className="font-mono text-foreground">{endDate}</span>
+                </div>
+              )}
+              <div className="flex justify-between">
+                <span>Branch:</span>
+                <span className="font-medium text-foreground">
+                  {shopFilter === "ALL" ? "All Branches" : shops.find((s) => s._id === shopFilter)?.name || shopFilter}
+                </span>
+              </div>
+            </div>
+
+            {bulkDeleteCount === 0 ? (
+              <p className="text-center font-semibold text-muted-foreground py-2">
+                No records matching the filter dated prior to October 01, 2026 were found.
+              </p>
+            ) : (
+              <div className="space-y-2 pt-1">
+                <label className="text-xs font-semibold text-foreground">
+                  Type <span className="font-mono text-destructive select-all">PERMANENT DELETE</span> to confirm:
+                </label>
+                <Input
+                  placeholder="PERMANENT DELETE"
+                  value={bulkDeleteConfirmation}
+                  onChange={(e) => setBulkDeleteConfirmation(e.target.value)}
+                  className="text-xs font-mono font-semibold"
+                  disabled={isBulkDeleting}
+                />
+              </div>
+            )}
+          </div>
+
+          <AlertDialogFooter className="gap-2 sm:gap-0">
+            <AlertDialogCancel disabled={isBulkDeleting}>Cancel</AlertDialogCancel>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={handleBulkDeleteSubmit}
+              disabled={isBulkDeleting || bulkDeleteCount === 0 || bulkDeleteConfirmation !== "PERMANENT DELETE"}
+              className="text-xs font-semibold gap-1.5"
+            >
+              {isBulkDeleting ? (
+                <Loader2Icon className="size-3.5 animate-spin mr-1" />
+              ) : (
+                <Trash2Icon className="size-3.5" />
+              )}
+              <span>Permanently Delete ({bulkDeleteCount ?? 0}) Records</span>
+            </Button>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

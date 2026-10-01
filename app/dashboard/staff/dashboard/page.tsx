@@ -3,21 +3,34 @@ import connectDB from "@/lib/mongodb";
 import { User } from "@/models/User";
 import { getSummaryAnalyticsAction } from "@/actions/reports";
 import { StaffDashboardView } from "@/components/staff/dashboard-view";
+import { InventoryView } from "@/components/inventory/inventory-view";
 
 export default async function StaffDashboardPage() {
   const session = await auth();
 
   await connectDB();
   const dbUser = session?.user?.id
-    ? await User.findById(session.user.id).populate("shop", "name code").lean()
+    ? await User.findById(session.user.id).populate("shop", "name code shopType").lean()
     : null;
 
-  const userShopId = dbUser?.shop
-    ? (dbUser.shop as any)._id?.toString() || dbUser.shop.toString()
-    : (session?.user as { shop?: string | null })?.shop || null;
-  const userShopName = dbUser?.shop
-    ? (dbUser.shop as any).name || null
-    : (session?.user as { shopName?: string | null })?.shopName || null;
+  const userShop = (dbUser as any)?.shop;
+  const userShopId = userShop?._id?.toString() || userShop?.toString() || (session?.user as { shop?: string | null })?.shop || null;
+  const userShopName = userShop?.name || (session?.user as { shopName?: string | null })?.shopName || null;
+  const userShopCode = userShop?.code || "";
+  const isInventoryShop = userShop?.shopType === "INVENTORY";
+
+  if (isInventoryShop && userShopId) {
+    return (
+      <div className="space-y-6">
+        <InventoryView
+          shopId={userShopId}
+          shopName={userShopName || "Branch"}
+          shopCode={userShopCode}
+          isStaff={true}
+        />
+      </div>
+    );
+  }
 
   // SSR initial load with "today" as default period
   const res = await getSummaryAnalyticsAction({ period: "today" });
