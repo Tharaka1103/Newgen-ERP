@@ -1399,10 +1399,16 @@ export function SingleShopView({
       cell: ({ row }) => {
         const r = row.original;
         if (r.isCrossBranchPayment) {
+          const isBranchExpense = r.type === "EXPENSE" || Boolean(r.isCommunicationItem);
           return (
             <div className="flex flex-col gap-0.5">
-              <Badge variant="outline" className="text-[10px] border-blue-500/40 bg-blue-500/10 text-blue-700 dark:text-blue-400 font-semibold">
-                For: {r.beneficiaryShop?.name || r.relatedBranch?.name || "Other Branch"}
+              <Badge variant="outline" className={`text-[10px] font-semibold ${
+                isBranchExpense
+                  ? "border-amber-500/40 bg-amber-500/10 text-amber-800 dark:text-amber-300"
+                  : "border-blue-500/40 bg-blue-500/10 text-blue-700 dark:text-blue-400"
+              }`}>
+                {isBranchExpense ? "Expense For: " : "For: "}
+                {r.beneficiaryShop?.name || r.relatedBranch?.name || "Other Branch"}
               </Badge>
               <span className={`text-[9px] font-mono px-1 py-0 rounded border w-fit ${
                 r.interBranchSettlementStatus === "SETTLED"

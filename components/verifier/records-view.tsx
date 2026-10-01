@@ -203,43 +203,62 @@ export function RecordsView({
             <p className="text-xs text-muted-foreground break-words line-clamp-2" title={r.reason}>
               {r.reason}
             </p>
-            {(r.isCrossBranchPayment || r.isRelatedToBranch) && (
-              <div className="rounded-md border border-blue-500/30 bg-blue-500/10 p-2 space-y-1 text-[10px]">
-                <div className="flex items-center justify-between gap-1">
-                  <div className="flex items-center gap-1 font-bold text-blue-700 dark:text-blue-300">
-                    <BuildingIcon className="size-3 text-blue-600 dark:text-blue-400 shrink-0" />
-                    <span className="uppercase tracking-wider text-[9px]">Cross-Branch</span>
+            {(r.isCrossBranchPayment || r.isRelatedToBranch) && (() => {
+              const isBranchExpense = r.type === "EXPENSE" || Boolean(r.isCommunicationItem);
+              return (
+                <div className={`rounded-md border p-2 space-y-1 text-[10px] ${
+                  isBranchExpense
+                    ? "border-amber-500/30 bg-amber-500/10"
+                    : "border-blue-500/30 bg-blue-500/10"
+                }`}>
+                  <div className="flex items-center justify-between gap-1">
+                    <div className={`flex items-center gap-1 font-bold ${
+                      isBranchExpense ? "text-amber-800 dark:text-amber-300" : "text-blue-700 dark:text-blue-300"
+                    }`}>
+                      <BuildingIcon className={`size-3 shrink-0 ${
+                        isBranchExpense ? "text-amber-600 dark:text-amber-400" : "text-blue-600 dark:text-blue-400"
+                      }`} />
+                      <span className="uppercase tracking-wider text-[9px]">
+                        {isBranchExpense ? "Inter-Branch Expense" : "Cross-Branch"}
+                      </span>
+                    </div>
+                    {r.interBranchSettlementStatus && (
+                      <Badge
+                        variant="outline"
+                        className={`text-[8px] px-1.5 py-0 h-3.5 font-mono uppercase whitespace-nowrap ${
+                          r.interBranchSettlementStatus === "SETTLED"
+                            ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                            : "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-400"
+                        }`}
+                      >
+                        {r.interBranchSettlementStatus === "SETTLED" ? "Settled" : "Unsettled"}
+                      </Badge>
+                    )}
                   </div>
-                  {r.interBranchSettlementStatus && (
-                    <Badge
-                      variant="outline"
-                      className={`text-[8px] px-1.5 py-0 h-3.5 font-mono uppercase whitespace-nowrap ${
-                        r.interBranchSettlementStatus === "SETTLED"
-                          ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
-                          : "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-400"
-                      }`}
-                    >
-                      {r.interBranchSettlementStatus === "SETTLED" ? "Settled" : "Unsettled"}
-                    </Badge>
+
+                  <div className={`text-[10px] space-y-0.5 border-t pt-1 text-muted-foreground leading-tight ${
+                    isBranchExpense ? "border-amber-500/20" : "border-blue-500/20"
+                  }`}>
+                    <div className="truncate">
+                      {isBranchExpense ? "Fulfilled by: " : "Cash at: "}
+                      <strong className="text-foreground">{r.collectingShop?.name || r.shop?.name}</strong>
+                    </div>
+                    <div className="truncate">
+                      {isBranchExpense ? "Expense for: " : "Income for: "}
+                      <strong className={isBranchExpense ? "text-rose-600 dark:text-rose-400 font-bold" : "text-blue-700 dark:text-blue-400 font-bold"}>
+                        {r.beneficiaryShop?.name || r.relatedBranch?.name}
+                      </strong>
+                    </div>
+                  </div>
+
+                  {r.relatedBranchNote && (
+                    <p className="text-[9px] text-muted-foreground italic bg-background/50 p-1 rounded border border-border line-clamp-2" title={r.relatedBranchNote}>
+                      Note: {r.relatedBranchNote}
+                    </p>
                   )}
                 </div>
-
-                <div className="text-[10px] space-y-0.5 border-t border-blue-500/20 pt-1 text-muted-foreground leading-tight">
-                  <div className="truncate">
-                    Cash at: <strong className="text-foreground">{r.collectingShop?.name || r.shop?.name}</strong>
-                  </div>
-                  <div className="truncate">
-                    Income for: <strong className="text-blue-700 dark:text-blue-400">{r.beneficiaryShop?.name || r.relatedBranch?.name}</strong>
-                  </div>
-                </div>
-
-                {r.relatedBranchNote && (
-                  <p className="text-[9px] text-muted-foreground italic bg-background/50 p-1 rounded border border-border line-clamp-2" title={r.relatedBranchNote}>
-                    Note: {r.relatedBranchNote}
-                  </p>
-                )}
-              </div>
-            )}
+              );
+            })()}
           </div>
         );
       },
@@ -473,54 +492,81 @@ export function RecordsView({
                 )}
 
                 {/* Cross-Branch Transfer Details */}
-                {(selectedRecord?.isCrossBranchPayment || selectedRecord?.isRelatedToBranch) && (
-                  <div className="p-3.5 rounded-xl border border-blue-500/30 bg-blue-500/10 space-y-2.5 text-xs">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-1.5 font-bold text-blue-800 dark:text-blue-300">
-                        <BuildingIcon className="size-3.5 text-blue-600 dark:text-blue-400" />
-                        <span>Cross-Branch Transaction Details</span>
+                {(selectedRecord?.isCrossBranchPayment || selectedRecord?.isRelatedToBranch) && (() => {
+                  const isBranchExpense = selectedRecord.type === "EXPENSE" || Boolean(selectedRecord.isCommunicationItem);
+                  return (
+                    <div className={`p-3.5 rounded-xl border space-y-2.5 text-xs ${
+                      isBranchExpense
+                        ? "border-amber-500/30 bg-amber-500/10"
+                        : "border-blue-500/30 bg-blue-500/10"
+                    }`}>
+                      <div className="flex items-center justify-between">
+                        <div className={`flex items-center gap-1.5 font-bold ${
+                          isBranchExpense ? "text-amber-800 dark:text-amber-300" : "text-blue-800 dark:text-blue-300"
+                        }`}>
+                          <BuildingIcon className={`size-3.5 ${
+                            isBranchExpense ? "text-amber-600 dark:text-amber-400" : "text-blue-600 dark:text-blue-400"
+                          }`} />
+                          <span>{isBranchExpense ? "Inter-Branch Expense Details" : "Cross-Branch Transaction Details"}</span>
+                        </div>
+                        <Badge
+                          variant="outline"
+                          className={`text-[10px] px-2 py-0.5 font-mono uppercase ${
+                            selectedRecord.interBranchSettlementStatus === "SETTLED"
+                              ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
+                              : "border-amber-500/40 bg-amber-500/15 text-amber-700 dark:text-amber-400"
+                          }`}
+                        >
+                          {selectedRecord.interBranchSettlementStatus === "SETTLED" ? "Settled" : "Unsettled Inter-Branch"}
+                        </Badge>
                       </div>
-                      <Badge
-                        variant="outline"
-                        className={`text-[10px] px-2 py-0.5 font-mono uppercase ${
-                          selectedRecord.interBranchSettlementStatus === "SETTLED"
-                            ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
-                            : "border-amber-500/40 bg-amber-500/15 text-amber-700 dark:text-amber-400"
-                        }`}
-                      >
-                        {selectedRecord.interBranchSettlementStatus === "SETTLED" ? "Settled" : "Unsettled Inter-Branch Cash"}
-                      </Badge>
+
+                      <div className={`grid grid-cols-2 gap-2 text-[11px] bg-background/60 p-2.5 rounded-lg border ${
+                        isBranchExpense ? "border-amber-500/20" : "border-blue-500/20"
+                      }`}>
+                        <div>
+                          <span className="text-muted-foreground block text-[10px] uppercase font-semibold">
+                            {isBranchExpense ? "Fulfillment Branch (Source)" : "Cash Drawer (Collecting Branch)"}
+                          </span>
+                          <span className="font-semibold text-foreground">
+                            {selectedRecord?.collectingShop?.name || selectedRecord?.shop?.name} ({selectedRecord?.collectingShop?.code || selectedRecord?.shop?.code})
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-muted-foreground block text-[10px] uppercase font-semibold">
+                            {isBranchExpense ? "Expense Incurred By (Target Branch)" : "Income Beneficiary (Sales Branch)"}
+                          </span>
+                          <span className={`font-bold ${isBranchExpense ? "text-rose-600 dark:text-rose-400" : "text-blue-700 dark:text-blue-400"}`}>
+                            {selectedRecord?.beneficiaryShop?.name || selectedRecord?.relatedBranch?.name || "Specified Branch"} ({selectedRecord?.beneficiaryShop?.code || selectedRecord?.relatedBranch?.code || "—"})
+                          </span>
+                        </div>
+                      </div>
+
+                      <p className="text-[11px] text-muted-foreground">
+                        {isBranchExpense ? (
+                          <>
+                            💡 <strong>Accounting Impact:</strong> Approving this transaction logs an <strong>operational expense</strong> of LKR {Number(selectedRecord.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })} for <strong>{selectedRecord?.beneficiaryShop?.name || selectedRecord?.relatedBranch?.name}</strong>, fulfilled by <strong>{selectedRecord?.collectingShop?.name || selectedRecord?.shop?.name}</strong>.
+                          </>
+                        ) : (
+                          <>
+                            💡 <strong>Accounting Impact:</strong> Approving this transaction adds physical cash to <strong>{selectedRecord?.collectingShop?.name || selectedRecord?.shop?.name}</strong> drawer, and credits income to <strong>{selectedRecord?.beneficiaryShop?.name || selectedRecord?.relatedBranch?.name}</strong>.
+                          </>
+                        )}
+                      </p>
+
+                      {selectedRecord?.relatedBranchNote && (
+                        <div className={`pt-1.5 border-t ${isBranchExpense ? "border-amber-500/20" : "border-blue-500/20"}`}>
+                          <span className="text-muted-foreground block text-[10px] uppercase font-semibold">Branch Transfer Note:</span>
+                          <p className={`mt-1 text-xs text-foreground font-medium bg-background/80 p-2.5 rounded-lg border whitespace-pre-wrap ${
+                            isBranchExpense ? "border-amber-500/20" : "border-blue-500/20"
+                          }`}>
+                            {selectedRecord.relatedBranchNote}
+                          </p>
+                        </div>
+                      )}
                     </div>
-
-                    <div className="grid grid-cols-2 gap-2 text-[11px] bg-background/60 p-2.5 rounded-lg border border-blue-500/20">
-                      <div>
-                        <span className="text-muted-foreground block text-[10px] uppercase font-semibold">Cash Drawer (Collecting Branch)</span>
-                        <span className="font-semibold text-foreground">
-                          {selectedRecord?.collectingShop?.name || selectedRecord?.shop?.name} ({selectedRecord?.collectingShop?.code || selectedRecord?.shop?.code})
-                        </span>
-                      </div>
-                      <div>
-                        <span className="text-muted-foreground block text-[10px] uppercase font-semibold">Income Beneficiary (Sales Branch)</span>
-                        <span className="font-bold text-blue-700 dark:text-blue-400">
-                          {selectedRecord?.beneficiaryShop?.name || selectedRecord?.relatedBranch?.name || "Specified Branch"} ({selectedRecord?.beneficiaryShop?.code || selectedRecord?.relatedBranch?.code || "—"})
-                        </span>
-                      </div>
-                    </div>
-
-                    <p className="text-[11px] text-muted-foreground">
-                      💡 <strong>Accounting Impact:</strong> Approving this transaction adds physical cash to <strong>{selectedRecord?.collectingShop?.name || selectedRecord?.shop?.name}</strong> drawer, and credits income to <strong>{selectedRecord?.beneficiaryShop?.name || selectedRecord?.relatedBranch?.name}</strong>.
-                    </p>
-
-                    {selectedRecord?.relatedBranchNote && (
-                      <div className="pt-1.5 border-t border-blue-500/20">
-                        <span className="text-muted-foreground block text-[10px] uppercase font-semibold">Branch Transfer Note:</span>
-                        <p className="mt-1 text-xs text-foreground font-medium bg-background/80 p-2.5 rounded-lg border border-blue-500/20 whitespace-pre-wrap">
-                          {selectedRecord.relatedBranchNote}
-                        </p>
-                      </div>
-                    )}
-                  </div>
-                )}
+                  );
+                })()}
 
                 <div className="text-[11px] text-muted-foreground flex items-center justify-between px-1">
                   <span>Submitted by: <strong className="text-foreground">{selectedRecord?.createdBy?.name || "Unknown"}</strong></span>

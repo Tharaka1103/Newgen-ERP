@@ -22,7 +22,10 @@ export async function recalculateShopRunningBalance(
   const shopObjId = new mongoose.Types.ObjectId(shopId.toString());
 
   const records = await FinanceRecord.find({
-    shop: shopObjId,
+    $or: [
+      { shop: shopObjId, isCrossBranchPayment: { $ne: true } },
+      { beneficiaryShop: shopObjId, isCrossBranchPayment: true },
+    ],
     isDeleted: { $ne: true },
   })
     .sort({ date: 1, createdAt: 1 })
@@ -136,11 +139,13 @@ export async function getShopCashBalance(
   // 2. Cross-branch cash physically collected AT this shop (as collectingShop)
   // While UNSETTLED: cash physically sits in this shop's drawer (+effectiveAmount).
   // Once SETTLED: cash was handed over to beneficiary branch or deposited into bank (removed from drawer).
+  // Note: Only applies to INCOME records where physical cash was collected from customers!
   const collectingCashAgg = await FinanceRecord.aggregate([
     {
       $match: {
         collectingShop: shopObjId,
         isCrossBranchPayment: true,
+        type: "INCOME",
         isDeleted: { $ne: true },
         status: "APPROVED",
         paymentMethod: { $ne: "CREDIT" },
@@ -176,6 +181,7 @@ export async function getShopCashBalance(
       $match: {
         beneficiaryShop: shopObjId,
         isCrossBranchPayment: true,
+        type: "INCOME",
         isDeleted: { $ne: true },
         status: "APPROVED",
         paymentMethod: { $ne: "CREDIT" },
@@ -242,6 +248,7 @@ export async function getShopInterBranchDues(
         collectingShop: shopObjId,
         beneficiaryShop: { $ne: null },
         isCrossBranchPayment: true,
+        type: "INCOME",
         interBranchSettlementStatus: "UNSETTLED",
         status: "APPROVED",
         isDeleted: { $ne: true },
@@ -293,6 +300,7 @@ export async function getShopInterBranchDues(
         beneficiaryShop: shopObjId,
         collectingShop: { $ne: null },
         isCrossBranchPayment: true,
+        type: "INCOME",
         interBranchSettlementStatus: "UNSETTLED",
         status: "APPROVED",
         isDeleted: { $ne: true },

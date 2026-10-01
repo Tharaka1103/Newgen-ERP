@@ -1414,21 +1414,29 @@ export function FinancesView({
                 )}
               </div>
             )}
-            {(r.isCrossBranchPayment || (r.isRelatedToBranch && r.relatedBranch)) && (
-              <div className="flex items-center gap-1 flex-wrap pt-0.5">
-                <span className="inline-flex text-[9px] font-medium text-blue-700 dark:text-blue-300 bg-blue-500/10 px-1.5 py-0.5 rounded border border-blue-500/20">
-                  Cross-Branch: For {r.beneficiaryShop?.name || r.relatedBranch?.name}
-                </span>
-                {r.interBranchSettlementStatus && (
-                  <span className={`inline-flex text-[8px] font-mono px-1 py-0.5 rounded border ${r.interBranchSettlementStatus === "SETTLED"
-                    ? "text-emerald-700 dark:text-emerald-300 bg-emerald-500/10 border-emerald-500/20"
-                    : "text-amber-700 dark:text-amber-300 bg-amber-500/10 border-amber-500/20"
-                    }`}>
-                    {r.interBranchSettlementStatus === "SETTLED" ? "Settled" : "Unsettled"}
+            {(r.isCrossBranchPayment || (r.isRelatedToBranch && r.relatedBranch)) && (() => {
+              const isBranchExpense = r.type === "EXPENSE" || Boolean(r.isCommunicationItem);
+              return (
+                <div className="flex items-center gap-1 flex-wrap pt-0.5">
+                  <span className={`inline-flex text-[9px] font-medium px-1.5 py-0.5 rounded border ${
+                    isBranchExpense
+                      ? "text-amber-800 dark:text-amber-300 bg-amber-500/10 border-amber-500/20"
+                      : "text-blue-700 dark:text-blue-300 bg-blue-500/10 border-blue-500/20"
+                  }`}>
+                    {isBranchExpense ? "Inter-Branch Expense: For " : "Cross-Branch: For "}
+                    {r.beneficiaryShop?.name || r.relatedBranch?.name}
                   </span>
-                )}
-              </div>
-            )}
+                  {r.interBranchSettlementStatus && (
+                    <span className={`inline-flex text-[8px] font-mono px-1 py-0.5 rounded border ${r.interBranchSettlementStatus === "SETTLED"
+                      ? "text-emerald-700 dark:text-emerald-300 bg-emerald-500/10 border-emerald-500/20"
+                      : "text-amber-700 dark:text-amber-300 bg-amber-500/10 border-amber-500/20"
+                      }`}>
+                      {r.interBranchSettlementStatus === "SETTLED" ? "Settled" : "Unsettled"}
+                    </span>
+                  )}
+                </div>
+              );
+            })()}
           </div>
         );
       },
@@ -2408,7 +2416,7 @@ export function FinancesView({
                   <div className="p-3 rounded-lg border border-amber-500/30 bg-amber-500/10 space-y-2.5">
                     <div className="flex items-center gap-1.5 text-xs text-amber-700 dark:text-amber-400 font-semibold">
                       <AlertTriangleIcon className="size-3.5" />
-                      Cross-Branch Transfer: Requires Verifier Review &amp; Approval
+                      Inter-Branch Expense: Billed to target branch as an operational expense. Requires Verifier Approval.
                     </div>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <div className="space-y-1">

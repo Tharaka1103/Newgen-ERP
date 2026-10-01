@@ -464,9 +464,27 @@ export async function updateFinanceRecordAction(formData: unknown) {
         record.approvedAmount = null;
         record.isLocked = false;
       }
+
+      if (record.isCommunicationItem) {
+        if (record.isRelatedToBranch) {
+          record.type = "EXPENSE";
+          record.isCrossBranchPayment = true;
+          record.collectingShop = record.shop || null;
+          record.beneficiaryShop = record.relatedBranch || null;
+          if (!record.interBranchSettlementStatus) {
+            record.interBranchSettlementStatus = "UNSETTLED";
+          }
+        } else {
+          record.type = "INCOME";
+          record.isCrossBranchPayment = false;
+          record.collectingShop = null;
+          record.beneficiaryShop = null;
+          record.interBranchSettlementStatus = undefined;
+        }
+      }
     }
 
-    if (result.data.isCrossBranchPayment !== undefined) {
+    if (result.data.isCrossBranchPayment !== undefined && !record.isCommunicationItem) {
       record.isCrossBranchPayment = Boolean(result.data.isCrossBranchPayment);
       record.collectingShop = record.isCrossBranchPayment ? (record.shop || null) : null;
       record.beneficiaryShop = record.isCrossBranchPayment && result.data.beneficiaryShop
@@ -823,28 +841,47 @@ export async function createCommunicationSaleBatchAction(payload: {
       }
     }
 
-    // Find or create "Communication Items" INCOME category
-    let category = await Category.findOne({
-      name: { $regex: /^communication items$/i },
-      type: "INCOME",
-      isActive: true,
-    });
-    if (!category) {
+    // Resolve category: If branch-related, it is an inter-branch operational EXPENSE for the target branch
+    let category = null;
+    if (isBranchRelated) {
       category = await Category.findOne({
-        name: { $regex: /^communication/i },
+        name: { $regex: /printing|communication/i },
+        type: "EXPENSE",
+        isActive: true,
+      });
+      if (!category) {
+        category = await Category.create({
+          name: "Printing & Communication Expenses",
+          description: "Inter-branch printing, photocopying, and communication services",
+          type: "EXPENSE",
+          colorToken: "chart-2",
+          isActive: true,
+          createdBy: new mongoose.Types.ObjectId(session.user.id),
+        });
+      }
+    } else {
+      category = await Category.findOne({
+        name: { $regex: /^communication items$/i },
         type: "INCOME",
         isActive: true,
       });
-    }
-    if (!category) {
-      category = await Category.create({
-        name: "Communication Items",
-        description: "Revenue from communication shop sales and services",
-        type: "INCOME",
-        colorToken: "chart-1",
-        isActive: true,
-        createdBy: new mongoose.Types.ObjectId(session.user.id),
-      });
+      if (!category) {
+        category = await Category.findOne({
+          name: { $regex: /^communication/i },
+          type: "INCOME",
+          isActive: true,
+        });
+      }
+      if (!category) {
+        category = await Category.create({
+          name: "Communication Items",
+          description: "Revenue from communication shop sales and services",
+          type: "INCOME",
+          colorToken: "chart-1",
+          isActive: true,
+          createdBy: new mongoose.Types.ObjectId(session.user.id),
+        });
+      }
     }
 
     const now = new Date();
@@ -949,7 +986,7 @@ export async function createCommunicationSaleBatchAction(payload: {
         billNumber,
         reason: recordReason,
         amount: netAmount,
-        type: "INCOME",
+        type: isBranchRelated ? "EXPENSE" : "INCOME",
         status: recordStatus,
         approvedAmount: isBranchRelated ? null : netAmount,
         runningBalance: 0,
