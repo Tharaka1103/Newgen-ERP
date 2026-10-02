@@ -93,34 +93,18 @@ export async function getSummaryAnalyticsAction(params: AnalyticsParams = {}) {
         };
       }
       const staffShopObjId = new mongoose.Types.ObjectId(staffShop);
-      const staffShopDoc = await Shop.findById(staffShopObjId).select("shopType").lean();
-      if (staffShopDoc?.shopType === "COMMUNICATION") {
-        query.shop = staffShopObjId;
-        query.$nor = [
-          { isCrossBranchPayment: true, isCommunicationItem: { $ne: true }, beneficiaryShop: { $ne: staffShopObjId } },
-          { isRelatedToBranch: true, isCommunicationItem: { $ne: true }, relatedBranch: { $ne: staffShopObjId } },
-        ];
-      } else {
-        query.$or = [
-          { shop: staffShopObjId, isCrossBranchPayment: { $ne: true } },
-          { beneficiaryShop: staffShopObjId, isCrossBranchPayment: true },
-        ];
-      }
+      query.$or = [
+        { shop: staffShopObjId, isCrossBranchPayment: { $ne: true } },
+        { shop: staffShopObjId, isCommunicationItem: true },
+        { beneficiaryShop: staffShopObjId, isCrossBranchPayment: true },
+      ];
     } else if (params.shopId && params.shopId !== "ALL") {
       const adminShopObjId = new mongoose.Types.ObjectId(params.shopId);
-      const adminShopDoc = await Shop.findById(adminShopObjId).select("shopType").lean();
-      if (adminShopDoc?.shopType === "COMMUNICATION") {
-        query.shop = adminShopObjId;
-        query.$nor = [
-          { isCrossBranchPayment: true, isCommunicationItem: { $ne: true }, beneficiaryShop: { $ne: adminShopObjId } },
-          { isRelatedToBranch: true, isCommunicationItem: { $ne: true }, relatedBranch: { $ne: adminShopObjId } },
-        ];
-      } else {
-        query.$or = [
-          { shop: adminShopObjId, isCrossBranchPayment: { $ne: true } },
-          { beneficiaryShop: adminShopObjId, isCrossBranchPayment: true },
-        ];
-      }
+      query.$or = [
+        { shop: adminShopObjId, isCrossBranchPayment: { $ne: true } },
+        { shop: adminShopObjId, isCommunicationItem: true },
+        { beneficiaryShop: adminShopObjId, isCrossBranchPayment: true },
+      ];
     }
 
     if (params.categoryId && params.categoryId !== "ALL") {

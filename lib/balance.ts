@@ -16,6 +16,7 @@ export function resolveShopEffectiveType(
     isCrossBranchPayment?: boolean;
     beneficiaryShop?: any;
     shop?: any;
+    collectingShop?: any;
   },
   targetShopId: string | mongoose.Types.ObjectId
 ): "INCOME" | "EXPENSE" {
@@ -38,12 +39,18 @@ export function resolveShopEffectiveType(
     return "INCOME";
   }
 
+  // Cross-branch cash collections physically received at this shop are cash INCOME for this shop's drawer
+  if (directShopId === targetIdStr && record.isCrossBranchPayment) {
+    return "INCOME";
+  }
+
   return record.type === "EXPENSE" ? "EXPENSE" : "INCOME";
 }
 
 /**
  * Recalculates the cumulative running balance for a shop in chronological order.
  * Triggers upon create/update/delete/approval of records.
+ * Running balance tracks the physical cash drawer of this specific shop.
  */
 export async function recalculateShopRunningBalance(
   shopId: string | mongoose.Types.ObjectId,
@@ -51,33 +58,13 @@ export async function recalculateShopRunningBalance(
 ): Promise<void> {
   await connectDB();
   const shopObjId = new mongoose.Types.ObjectId(shopId.toString());
-  const shopDoc = await Shop.findById(shopObjId).select("shopType").lean();
-  const isComm = shopDoc?.shopType === "COMMUNICATION";
 
-  let query: any;
-  if (isComm) {
-    // For communication shop: ONLY records created at this communication shop.
-    // Exclude other branch tuition collections (which are income for those branches, not communication).
-    query = {
-      shop: shopObjId,
-      isDeleted: { $ne: true },
-      $nor: [
-        { isCrossBranchPayment: true, isCommunicationItem: { $ne: true }, beneficiaryShop: { $ne: shopObjId } },
-        { isRelatedToBranch: true, isCommunicationItem: { $ne: true }, relatedBranch: { $ne: shopObjId } },
-      ],
-    };
-  } else {
-    // For a standard branch:
-    // Physical cash transactions at this shop OR tuition collections collected elsewhere for this branch.
-    // As per business rule: Communication retail sales (photocopy/prints) do NOT deduct cash balance of the target branch (only revenue/P&L).
-    query = {
-      $or: [
-        { shop: shopObjId, isCrossBranchPayment: { $ne: true } },
-        { beneficiaryShop: shopObjId, isCrossBranchPayment: true, isCommunicationItem: { $ne: true } },
-      ],
-      isDeleted: { $ne: true },
-    };
-  }
+  // Running balance represents physical cash movements at this specific shop.
+  // Every transaction created at this shop (including cross-branch cash collections) enters/leaves this shop's till.
+  const query = {
+    shop: shopObjId,
+    isDeleted: { $ne: true },
+  };
 
   const rawRecords = await FinanceRecord.find(query)
     .select("_id type status amount approvedAmount runningBalance paymentMethod isCrossBranchPayment beneficiaryShop shop isCommunicationItem date createdAt")
@@ -95,28 +82,24 @@ export async function recalculateShopRunningBalance(
 
   for (const record of records) {
     if (record.status === "REJECTED") {
-      if (record.shop?.toString() === shopObjId.toString()) {
-        bulkOps.push({
-          updateOne: {
-            filter: { _id: record._id },
-            update: { $set: { runningBalance: currentBalance } },
-          },
-        });
-      }
+      bulkOps.push({
+        updateOne: {
+          filter: { _id: record._id },
+          update: { $set: { runningBalance: currentBalance } },
+        },
+      });
       continue;
     }
 
     // CREDIT sales do not increase shop physical cash balance;
     // only subsequent cash debt repayments enter the shop cash balance.
     if (record.paymentMethod === "CREDIT") {
-      if (record.shop?.toString() === shopObjId.toString()) {
-        bulkOps.push({
-          updateOne: {
-            filter: { _id: record._id },
-            update: { $set: { runningBalance: currentBalance } },
-          },
-        });
-      }
+      bulkOps.push({
+        updateOne: {
+          filter: { _id: record._id },
+          update: { $set: { runningBalance: currentBalance } },
+        },
+      });
       continue;
     }
 
@@ -133,16 +116,12 @@ export async function recalculateShopRunningBalance(
       currentBalance -= effectiveAmount;
     }
 
-    // Only update the runningBalance of records that belong to this shop.
-    // Records belonging to other shops maintain their own origin shop's cash drawer running balance.
-    if (record.shop?.toString() === shopObjId.toString()) {
-      bulkOps.push({
-        updateOne: {
-          filter: { _id: record._id },
-          update: { $set: { runningBalance: currentBalance } },
-        },
-      });
-    }
+    bulkOps.push({
+      updateOne: {
+        filter: { _id: record._id },
+        update: { $set: { runningBalance: currentBalance } },
+      },
+    });
   }
 
   if (bulkOps.length > 0) {

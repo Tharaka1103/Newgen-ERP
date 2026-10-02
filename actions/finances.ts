@@ -74,37 +74,19 @@ export async function getFinanceRecordsAction(params: GetFinanceRecordsParams = 
       }
       targetShopForType = activeShopId;
       const staffShopObjId = new mongoose.Types.ObjectId(activeShopId);
-      const staffShopDoc = await Shop.findById(staffShopObjId).select("shopType").lean();
-      if (staffShopDoc?.shopType === "COMMUNICATION") {
-        query.shop = staffShopObjId;
-        query.$nor = [
-          { isCrossBranchPayment: true, isCommunicationItem: { $ne: true }, beneficiaryShop: { $ne: staffShopObjId } },
-          { isRelatedToBranch: true, isCommunicationItem: { $ne: true }, relatedBranch: { $ne: staffShopObjId } },
-        ];
-      } else {
-        query.$or = [
-          { shop: staffShopObjId, isCrossBranchPayment: { $ne: true } },
-          { beneficiaryShop: staffShopObjId, isCrossBranchPayment: true },
-        ];
-      }
+      query.$or = [
+        { shop: staffShopObjId },
+        { beneficiaryShop: staffShopObjId, isCrossBranchPayment: true },
+      ];
     } else {
       // Verifier and Admin can filter by any shop
       if (params.shopId && params.shopId !== "ALL") {
         targetShopForType = params.shopId;
         const filterShopObjId = new mongoose.Types.ObjectId(params.shopId);
-        const filterShopDoc = await Shop.findById(filterShopObjId).select("shopType").lean();
-        if (filterShopDoc?.shopType === "COMMUNICATION") {
-          query.shop = filterShopObjId;
-          query.$nor = [
-            { isCrossBranchPayment: true, isCommunicationItem: { $ne: true }, beneficiaryShop: { $ne: filterShopObjId } },
-            { isRelatedToBranch: true, isCommunicationItem: { $ne: true }, relatedBranch: { $ne: filterShopObjId } },
-          ];
-        } else {
-          query.$or = [
-            { shop: filterShopObjId, isCrossBranchPayment: { $ne: true } },
-            { beneficiaryShop: filterShopObjId, isCrossBranchPayment: true },
-          ];
-        }
+        query.$or = [
+          { shop: filterShopObjId },
+          { beneficiaryShop: filterShopObjId, isCrossBranchPayment: true },
+        ];
       }
     }
 

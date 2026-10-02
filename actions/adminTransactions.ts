@@ -46,19 +46,10 @@ export async function getAllTransactionsAdminAction(params: AdminTransactionsFil
 
     if (params.shopId && params.shopId !== "ALL") {
       const targetShopObjId = new mongoose.Types.ObjectId(params.shopId);
-      const targetShopDoc = await Shop.findById(targetShopObjId).select("name code shopType").lean();
-      if (targetShopDoc?.shopType === "COMMUNICATION") {
-        query.shop = targetShopObjId;
-        query.$nor = [
-          { isCrossBranchPayment: true, isCommunicationItem: { $ne: true }, beneficiaryShop: { $ne: targetShopObjId } },
-          { isRelatedToBranch: true, isCommunicationItem: { $ne: true }, relatedBranch: { $ne: targetShopObjId } },
-        ];
-      } else {
-        query.$or = [
-          { shop: targetShopObjId, isCrossBranchPayment: { $ne: true } },
-          { beneficiaryShop: targetShopObjId, isCrossBranchPayment: true },
-        ];
-      }
+      query.$or = [
+        { shop: targetShopObjId },
+        { beneficiaryShop: targetShopObjId, isCrossBranchPayment: true },
+      ];
     }
 
     if (params.type && params.type !== "ALL") {
@@ -172,18 +163,10 @@ export async function getFilteredTransactionsForPdfAction(params: AdminTransacti
       const targetShopDoc = await Shop.findById(targetShopObjId).select("name code shopType").lean();
       if (targetShopDoc) {
         shopName = `${targetShopDoc.name} (${targetShopDoc.code})`;
-        if (targetShopDoc.shopType === "COMMUNICATION") {
-          query.shop = targetShopObjId;
-          query.$nor = [
-            { isCrossBranchPayment: true, isCommunicationItem: { $ne: true }, beneficiaryShop: { $ne: targetShopObjId } },
-            { isRelatedToBranch: true, isCommunicationItem: { $ne: true }, relatedBranch: { $ne: targetShopObjId } },
-          ];
-        } else {
-          query.$or = [
-            { shop: targetShopObjId, isCrossBranchPayment: { $ne: true } },
-            { beneficiaryShop: targetShopObjId, isCrossBranchPayment: true },
-          ];
-        }
+        query.$or = [
+          { shop: targetShopObjId },
+          { beneficiaryShop: targetShopObjId, isCrossBranchPayment: true },
+        ];
       }
     }
 
