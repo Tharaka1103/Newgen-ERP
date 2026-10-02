@@ -17,6 +17,10 @@ import {
   getCustomerCreditStatementAction,
 } from "@/actions/credit";
 import { settleInterBranchCashAction, getUtilityBillAnalyticsAction } from "@/actions/finances";
+import {
+  getDailySettlementHistoryAction,
+  recordDailyCashSettlementAction,
+} from "@/actions/dailySettlement";
 import { getActiveBankAccountsAction } from "@/actions/bankAccounts";
 import { InventoryView } from "@/components/inventory/inventory-view";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -95,6 +99,9 @@ import {
   FlameIcon,
   ZapIcon,
   DropletIcon,
+  CoinsIcon,
+  BanknoteIcon,
+  ArrowRightLeftIcon,
 } from "lucide-react";
 import { toast } from "@/components/ui/toast";
 import { useForm } from "react-hook-form";
@@ -166,7 +173,7 @@ export function SingleShopView({
   const isCommunication = initialShop.shopType === "COMMUNICATION";
   const isInventoryShop = initialShop.shopType === "INVENTORY";
 
-  const [activeTab, setActiveTab] = React.useState<"overview" | "itemSales" | "items" | "utilityBills" | "wastage" | "credits" | "staff">("overview");
+  const [activeTab, setActiveTab] = React.useState<"overview" | "itemSales" | "items" | "utilityBills" | "wastage" | "credits" | "dailySettlement" | "staff">("overview");
   const [period, setPeriod] = React.useState<"today" | "week" | "month" | "year" | "custom">("month");
   const [startDate, setStartDate] = React.useState<string>("");
   const [endDate, setEndDate] = React.useState<string>("");
@@ -334,6 +341,261 @@ export function SingleShopView({
       isActive: true,
     },
   });
+
+  // Daily Cash Settlement State (Communication Shop)
+  const [dailySettlements, setDailySettlements] = React.useState<any[]>([]);
+  const [dailySettlementBankAccounts, setDailySettlementBankAccounts] = React.useState<any[]>([]);
+  const [dailySettlementSummary, setDailySettlementSummary] = React.useState<{
+    totalSettled: number;
+    totalToPettyCash: number;
+    totalToBank: number;
+    settlementCount: number;
+    lastSettlementDate: string | Date | null;
+  }>({
+    totalSettled: 0,
+    totalToPettyCash: 0,
+    totalToBank: 0,
+    settlementCount: 0,
+    lastSettlementDate: null,
+  });
+  const [dailySettlementCurrentCash, setDailySettlementCurrentCash] = React.useState<number>(initialStats.currentBalance || 0);
+  const [dailySettlementLoading, setDailySettlementLoading] = React.useState(false);
+  const [dailySettlementDialogOpen, setDailySettlementDialogOpen] = React.useState(false);
+  const [isSubmittingDailySettlement, setIsSubmittingDailySettlement] = React.useState(false);
+
+  // Settlement Form State
+  const [dailySettleDate, setDailySettleDate] = React.useState<string>(new Date().toISOString().split("T")[0]);
+  const [dailySettleRetainedFloat, setDailySettleRetainedFloat] = React.useState<number>(4000);
+  const [dailySettleTransferAmount, setDailySettleTransferAmount] = React.useState<number>(
+    Math.max(0, (initialStats.currentBalance || 0) - 4000)
+  );
+  const [dailySettleDestinationType, setDailySettleDestinationType] = React.useState<"PETTY_CASH" | "BANK_ACCOUNT">("PETTY_CASH");
+  const [dailySettleBankAccountId, setDailySettleBankAccountId] = React.useState<string>("");
+  const [dailySettleReference, setDailySettleReference] = React.useState<string>("");
+  const [dailySettleNote, setDailySettleNote] = React.useState<string>("");
+
+  const fetchDailySettlements = React.useCallback(async () => {
+    if (!shop._id) return;
+    setDailySettlementLoading(true);
+    const res = await getDailySettlementHistoryAction(shop._id);
+    if (res.success) {
+      setDailySettlements(res.settlements || []);
+      setDailySettlementBankAccounts(res.bankAccounts || []);
+      if (res.bankAccounts?.length > 0 && !dailySettleBankAccountId) {
+        setDailySettleBankAccountId(res.bankAccounts[0]._id);
+      }
+      if (res.summary) {
+        setDailySettlementSummary(res.summary);
+      }
+      if (typeof res.currentCashBalance === "number") {
+        setDailySettlementCurrentCash(res.currentCashBalance);
+        const surplus = Math.max(0, res.currentCashBalance - dailySettleRetainedFloat);
+        setDailySettleTransferAmount(surplus);
+      }
+    } else {
+      toast.create({
+        title: "Settlement data error",
+        description: res.error || "Failed to load daily settlement history.",
+        type: "error",
+      });
+    }
+    setDailySettlementLoading(false);
+  }, [shop._id, dailySettleRetainedFloat, dailySettleBankAccountId]);
+
+  const handleOpenDailySettlementDialog = () => {
+    const currentCash = dailySettlementCurrentCash || stats.currentBalance || 0;
+    const defaultFloat = 4000;
+    const surplus = Math.max(0, currentCash - defaultFloat);
+
+    setDailySettleDate(new Date().toISOString().split("T")[0]);
+    setDailySettleRetainedFloat(defaultFloat);
+    setDailySettleTransferAmount(surplus);
+    setDailySettleDestinationType("PETTY_CASH");
+    if (dailySettlementBankAccounts.length > 0 && !dailySettleBankAccountId) {
+      setDailySettleBankAccountId(dailySettlementBankAccounts[0]._id);
+    }
+    setDailySettleReference(`SETTLE-${Date.now().toString().slice(-6)}`);
+    setDailySettleNote("");
+    setDailySettlementDialogOpen(true);
+  };
+
+  const handleRetainedFloatChange = (newFloatVal: number) => {
+    const val = isNaN(newFloatVal) ? 0 : Math.max(0, newFloatVal);
+    setDailySettleRetainedFloat(val);
+    const calculatedTransfer = Math.max(0, dailySettlementCurrentCash - val);
+    setDailySettleTransferAmount(calculatedTransfer);
+  };
+
+  const handleTransferAmountChange = (newTransferVal: number) => {
+    const val = isNaN(newTransferVal) ? 0 : Math.max(0, newTransferVal);
+    setDailySettleTransferAmount(val);
+  };
+
+  const handleSubmitDailySettlement = async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    if (dailySettleTransferAmount <= 0) {
+      toast.create({
+        title: "Invalid transfer amount",
+        description: "Surplus transfer amount must be greater than 0 LKR.",
+        type: "error",
+      });
+      return;
+    }
+
+    if (dailySettleTransferAmount > dailySettlementCurrentCash) {
+      toast.create({
+        title: "Insufficient cash balance",
+        description: `Current drawer cash is LKR ${dailySettlementCurrentCash.toLocaleString()}, cannot sweep LKR ${dailySettleTransferAmount.toLocaleString()}.`,
+        type: "error",
+      });
+      return;
+    }
+
+    if (dailySettleDestinationType === "BANK_ACCOUNT" && !dailySettleBankAccountId) {
+      toast.create({
+        title: "Bank Account Required",
+        description: "Please select an active destination bank account.",
+        type: "error",
+      });
+      return;
+    }
+
+    setIsSubmittingDailySettlement(true);
+    const res = await recordDailyCashSettlementAction({
+      shopId: shop._id,
+      date: dailySettleDate,
+      totalCashBefore: dailySettlementCurrentCash,
+      retainedFloat: Number(dailySettleRetainedFloat),
+      transferAmount: Number(dailySettleTransferAmount),
+      destinationType: dailySettleDestinationType,
+      bankAccountId: dailySettleDestinationType === "BANK_ACCOUNT" ? dailySettleBankAccountId : null,
+      reference: dailySettleReference.trim(),
+      note: dailySettleNote.trim(),
+    });
+
+    if (res.success) {
+      toast.create({
+        title: "Settlement Recorded",
+        description: res.message || "Daily cash settlement successfully recorded.",
+        type: "success",
+      });
+      setDailySettlementDialogOpen(false);
+      fetchDailySettlements();
+      const shopRes = await getShopDetailsAction(shop._id);
+      if (shopRes.success && shopRes.stats) {
+        setStats(shopRes.stats);
+      }
+    } else {
+      toast.create({
+        title: "Settlement Failed",
+        description: res.error || "Failed to record daily settlement.",
+        type: "error",
+      });
+    }
+    setIsSubmittingDailySettlement(false);
+  };
+
+  React.useEffect(() => {
+    if (activeTab === "dailySettlement" && isCommunication) {
+      fetchDailySettlements();
+    }
+  }, [activeTab, isCommunication, fetchDailySettlements]);
+
+  const settlementColumns: ColumnDef<any>[] = [
+    {
+      accessorKey: "date",
+      header: "Date & Time",
+      cell: ({ row }) => {
+        const d = new Date(row.original.createdAt || row.original.date);
+        return (
+          <div className="flex flex-col">
+            <span className="font-mono text-xs">{d.toLocaleDateString()}</span>
+            <span className="text-[10px] text-muted-foreground">
+              {d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+            </span>
+          </div>
+        );
+      },
+    },
+    {
+      accessorKey: "reference",
+      header: "Reference #",
+      cell: ({ row }) => (
+        <span className="font-mono text-xs font-semibold text-foreground">
+          {row.original.reference || "-"}
+        </span>
+      ),
+    },
+    {
+      accessorKey: "totalCashBefore",
+      header: "Drawer Cash Before",
+      cell: ({ row }) => (
+        <span className="font-mono text-xs text-muted-foreground">
+          LKR {Number(row.original.totalCashBefore || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+        </span>
+      ),
+    },
+    {
+      accessorKey: "retainedFloat",
+      header: "Retained Float",
+      cell: ({ row }) => (
+        <Badge variant="outline" className="font-mono text-xs bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20">
+          LKR {Number(row.original.retainedFloat || 4000).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+        </Badge>
+      ),
+    },
+    {
+      accessorKey: "transferAmount",
+      header: "Swept / Transferred",
+      cell: ({ row }) => (
+        <span className="font-mono text-xs font-bold text-emerald-600 dark:text-emerald-400">
+          + LKR {Number(row.original.transferAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+        </span>
+      ),
+    },
+    {
+      accessorKey: "destinationType",
+      header: "Destination",
+      cell: ({ row }) => {
+        const isPetty = row.original.destinationType === "PETTY_CASH";
+        const bank = row.original.bankAccount;
+        return (
+          <div className="flex items-center gap-1.5">
+            {isPetty ? (
+              <Badge variant="secondary" className="text-xs bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20">
+                <CoinsIcon className="size-3 mr-1" />
+                Central Petty Cash
+              </Badge>
+            ) : (
+              <Badge variant="secondary" className="text-xs bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/20">
+                <LandmarkIcon className="size-3 mr-1" />
+                {bank ? `${bank.bankName} (${bank.accountNumber})` : "Bank Account"}
+              </Badge>
+            )}
+          </div>
+        );
+      },
+    },
+    {
+      accessorKey: "settledBy",
+      header: "Settled By",
+      cell: ({ row }) => (
+        <span className="text-xs text-muted-foreground">
+          {row.original.settledBy?.name || row.original.settledBy?.email || "Admin"}
+        </span>
+      ),
+    },
+    {
+      accessorKey: "note",
+      header: "Note",
+      cell: ({ row }) => (
+        <span className="text-xs text-muted-foreground truncate max-w-[150px] inline-block" title={row.original.note}>
+          {row.original.note || "-"}
+        </span>
+      ),
+    },
+  ];
 
   // Inter-Branch Cash Settlement State
   const [settleOpen, setSettleOpen] = React.useState(false);
@@ -1940,6 +2202,12 @@ export function SingleShopView({
             {isCommunication && (
               <TabsTrigger value="credits" className="text-xs">
                 Credit Customers ({creditStats.debtorCount || stats.creditCustomerCount || 0})
+              </TabsTrigger>
+            )}
+            {isCommunication && (
+              <TabsTrigger value="dailySettlement" className="text-xs flex items-center gap-1.5">
+                <CoinsIcon className="size-3.5 text-emerald-500" />
+                <span>Daily Settlement</span>
               </TabsTrigger>
             )}
             <TabsTrigger value="staff" className="text-xs">
@@ -3839,6 +4107,133 @@ export function SingleShopView({
           </TabsContent>
         )}
 
+        {/* DAILY SETTLEMENT TAB CONTENT (COMMUNICATION SHOPS) */}
+        {isCommunication && (
+          <TabsContent value="dailySettlement" className="space-y-6 mt-0">
+            {/* Header & Primary Action Button */}
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+              <div>
+                <h3 className="text-base font-semibold text-foreground flex items-center gap-2">
+                  <CoinsIcon className="size-5 text-emerald-500" />
+                  Daily Cash Float & Surplus Settlement
+                </h3>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Retain standard opening float (default LKR 4,000) in communication drawer and sweep excess balance to Petty Cash or Bank.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={fetchDailySettlements}
+                  disabled={dailySettlementLoading}
+                  className="h-8 text-xs font-medium"
+                >
+                  <RefreshCwIcon className={`size-3.5 mr-1.5 ${dailySettlementLoading ? "animate-spin" : ""}`} />
+                  Refresh
+                </Button>
+
+                <Button
+                  variant="default"
+                  size="sm"
+                  onClick={handleOpenDailySettlementDialog}
+                  className="h-8 text-xs font-medium bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm"
+                >
+                  <PlusCircleIcon className="size-3.5 mr-1.5" />
+                  Record Daily Settlement
+                </Button>
+              </div>
+            </div>
+
+            {/* KPI Cards */}
+            <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
+              <Card className="border border-border bg-card p-4 shadow-sm">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-medium text-muted-foreground">Drawer Cash In Hand</span>
+                  <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+                    <WalletIcon className="size-4" />
+                  </div>
+                </div>
+                <div className="mt-2 text-xl font-bold font-mono tracking-tight text-foreground">
+                  LKR {dailySettlementCurrentCash.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                </div>
+                <p className="text-[11px] text-muted-foreground mt-1">
+                  Active physical balance in communication drawer
+                </p>
+              </Card>
+
+              <Card className="border border-border bg-card p-4 shadow-sm">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-medium text-muted-foreground">Standard Opening Float</span>
+                  <div className="p-2 rounded-lg bg-amber-500/10 text-amber-600 dark:text-amber-400">
+                    <BanknoteIcon className="size-4" />
+                  </div>
+                </div>
+                <div className="mt-2 text-xl font-bold font-mono tracking-tight text-amber-600 dark:text-amber-400">
+                  LKR 4,000.00
+                </div>
+                <p className="text-[11px] text-muted-foreground mt-1">
+                  Default retained float for starting daily operations
+                </p>
+              </Card>
+
+              <Card className="border border-border bg-card p-4 shadow-sm">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-medium text-muted-foreground">Available Surplus</span>
+                  <div className="p-2 rounded-lg bg-blue-500/10 text-blue-600 dark:text-blue-400">
+                    <ArrowRightLeftIcon className="size-4" />
+                  </div>
+                </div>
+                <div className="mt-2 text-xl font-bold font-mono tracking-tight text-blue-600 dark:text-blue-400">
+                  LKR {Math.max(0, dailySettlementCurrentCash - 4000).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                </div>
+                <p className="text-[11px] text-muted-foreground mt-1">
+                  Drawer balance exceeding the 4,000 LKR float
+                </p>
+              </Card>
+
+              <Card className="border border-border bg-card p-4 shadow-sm">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-medium text-muted-foreground">Total Swept to Date</span>
+                  <div className="p-2 rounded-lg bg-purple-500/10 text-purple-600 dark:text-purple-400">
+                    <LandmarkIcon className="size-4" />
+                  </div>
+                </div>
+                <div className="mt-2 text-xl font-bold font-mono tracking-tight text-foreground">
+                  LKR {dailySettlementSummary.totalSettled.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                </div>
+                <p className="text-[11px] text-muted-foreground mt-1">
+                  Across {dailySettlementSummary.settlementCount} settlement records
+                </p>
+              </Card>
+            </div>
+
+            {/* Settlements History Table */}
+            <Card className="border border-border bg-card shadow-sm">
+              <CardHeader className="pb-3 pt-4 px-4 border-b border-border/40">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle className="text-sm font-semibold">Settlement Audit Ledger</CardTitle>
+                    <CardDescription className="text-xs">
+                      Historical log of daily drawer sweeps, retained floats, and destination accounts.
+                    </CardDescription>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent className="p-4">
+                <DataTable
+                  columns={settlementColumns}
+                  data={dailySettlements}
+                  searchKey="reference"
+                  searchPlaceholder="Filter by reference #..."
+                  loading={dailySettlementLoading}
+                />
+              </CardContent>
+            </Card>
+          </TabsContent>
+        )}
+
         {/* STAFF TAB CONTENT */}
         <TabsContent value="staff" className="space-y-4 mt-0">
           <div className="rounded-xl border border-border bg-card p-4 space-y-3 shadow-sm">
@@ -4570,6 +4965,237 @@ export function SingleShopView({
               </DialogFooter>
             </form>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* DAILY CASH FLOAT SETTLEMENT DIALOG */}
+      <Dialog open={dailySettlementDialogOpen} onOpenChange={setDailySettlementDialogOpen}>
+        <DialogContent className="sm:max-w-[540px]">
+          <DialogHeader>
+            <div className="flex items-center gap-2">
+              <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+                <CoinsIcon className="size-5" />
+              </div>
+              <div>
+                <DialogTitle className="text-base font-semibold">
+                  Record Daily Cash Settlement
+                </DialogTitle>
+                <DialogDescription className="text-xs">
+                  Retain standard opening float and sweep surplus drawer cash to Petty Cash or Bank.
+                </DialogDescription>
+              </div>
+            </div>
+          </DialogHeader>
+
+          <form onSubmit={handleSubmitDailySettlement} className="space-y-4 pt-2">
+            {/* Live Calculation Banner */}
+            <div className="rounded-xl border border-border bg-muted/40 p-4 space-y-3">
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-muted-foreground font-medium">Today's Available Cash in Drawer:</span>
+                <span className="font-mono font-bold text-foreground text-sm">
+                  LKR {dailySettlementCurrentCash.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 pt-1">
+                {/* Retained Float Input */}
+                <div className="space-y-1">
+                  <label className="text-[11px] font-semibold text-muted-foreground uppercase flex items-center justify-between">
+                    <span>Retained Float</span>
+                    <span className="text-[10px] text-primary lowercase">(editable)</span>
+                  </label>
+                  <div className="relative">
+                    <span className="absolute left-2.5 top-2 text-xs font-mono text-muted-foreground">LKR</span>
+                    <Input
+                      type="number"
+                      step="any"
+                      min="0"
+                      value={dailySettleRetainedFloat}
+                      onChange={(e) => handleRetainedFloatChange(Number(e.target.value) || 0)}
+                      className="h-8 text-xs font-mono pl-10 font-medium"
+                      required
+                    />
+                  </div>
+                  <p className="text-[10px] text-muted-foreground">
+                    Cash kept in drawer to start next day.
+                  </p>
+                </div>
+
+                {/* Sweep / Transfer Amount */}
+                <div className="space-y-1">
+                  <label className="text-[11px] font-semibold text-muted-foreground uppercase flex items-center justify-between">
+                    <span>Surplus Sweep Amount</span>
+                    <span className="text-[10px] text-emerald-600 font-semibold">(auto-calculated)</span>
+                  </label>
+                  <div className="relative">
+                    <span className="absolute left-2.5 top-2 text-xs font-mono text-muted-foreground">LKR</span>
+                    <Input
+                      type="number"
+                      step="any"
+                      min="0.01"
+                      value={dailySettleTransferAmount}
+                      onChange={(e) => handleTransferAmountChange(Number(e.target.value) || 0)}
+                      className="h-8 text-xs font-mono pl-10 font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-50/50 dark:bg-emerald-950/20 border-emerald-300 dark:border-emerald-800"
+                      required
+                    />
+                  </div>
+                  <p className="text-[10px] text-muted-foreground">
+                    Amount transferred out of drawer.
+                  </p>
+                </div>
+              </div>
+
+              {/* Dynamic Calculation Summary Indicator */}
+              <div className="rounded-lg bg-background p-2.5 border border-border/80 flex items-center justify-between text-xs">
+                <span className="text-muted-foreground">Drawer Remaining After Sweep:</span>
+                <span className="font-mono font-semibold text-foreground">
+                  LKR {Math.max(0, dailySettlementCurrentCash - dailySettleTransferAmount).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                </span>
+              </div>
+            </div>
+
+            {/* Destination Selection */}
+            <div className="space-y-2">
+              <label className="text-xs font-semibold text-foreground">
+                Target Destination Source:
+              </label>
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={() => setDailySettleDestinationType("PETTY_CASH")}
+                  className={`flex flex-col items-start p-3 rounded-xl border text-left transition-all ${
+                    dailySettleDestinationType === "PETTY_CASH"
+                      ? "border-primary bg-primary/5 text-foreground ring-1 ring-primary"
+                      : "border-border bg-card text-muted-foreground hover:bg-muted/50"
+                  }`}
+                >
+                  <div className="flex items-center gap-2 mb-1">
+                    <CoinsIcon className="size-4 text-blue-600" />
+                    <span className="text-xs font-semibold">Central Petty Cash</span>
+                  </div>
+                  <span className="text-[11px] text-muted-foreground">
+                    Sweeps surplus cash directly into the central company petty cash float.
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setDailySettleDestinationType("BANK_ACCOUNT")}
+                  className={`flex flex-col items-start p-3 rounded-xl border text-left transition-all ${
+                    dailySettleDestinationType === "BANK_ACCOUNT"
+                      ? "border-primary bg-primary/5 text-foreground ring-1 ring-primary"
+                      : "border-border bg-card text-muted-foreground hover:bg-muted/50"
+                  }`}
+                >
+                  <div className="flex items-center gap-2 mb-1">
+                    <LandmarkIcon className="size-4 text-indigo-600" />
+                    <span className="text-xs font-semibold">Bank Account</span>
+                  </div>
+                  <span className="text-[11px] text-muted-foreground">
+                    Deposits surplus cash into a verified company bank account.
+                  </span>
+                </button>
+              </div>
+            </div>
+
+            {/* Bank Account Dropdown if BANK_ACCOUNT selected */}
+            {dailySettleDestinationType === "BANK_ACCOUNT" && (
+              <div className="space-y-1">
+                <label className="text-xs font-semibold text-foreground">
+                  Select Destination Bank Account <span className="text-destructive">*</span>
+                </label>
+                {dailySettlementBankAccounts.length === 0 ? (
+                  <p className="text-xs text-destructive">
+                    No active company bank accounts found. Please add a bank account first.
+                  </p>
+                ) : (
+                  <Select value={dailySettleBankAccountId} onValueChange={(val) => setDailySettleBankAccountId(val || "")}>
+                    <SelectTrigger className="h-9 text-xs">
+                      <SelectValue placeholder="Choose bank account..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {dailySettlementBankAccounts.map((b) => (
+                        <SelectItem key={b._id} value={b._id}>
+                          {b.bankName} - {b.accountNumber} ({b.accountName})
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+              </div>
+            )}
+
+            {/* Date and Reference */}
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <label className="text-[11px] font-semibold text-muted-foreground uppercase">
+                  Settlement Date
+                </label>
+                <Input
+                  type="date"
+                  value={dailySettleDate}
+                  onChange={(e) => setDailySettleDate(e.target.value)}
+                  className="h-8 text-xs font-medium"
+                  required
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[11px] font-semibold text-muted-foreground uppercase">
+                  Reference #
+                </label>
+                <Input
+                  placeholder="e.g. SETTLE-00123"
+                  value={dailySettleReference}
+                  onChange={(e) => setDailySettleReference(e.target.value)}
+                  className="h-8 text-xs font-medium"
+                />
+              </div>
+            </div>
+
+            {/* Optional Note */}
+            <div className="space-y-1">
+              <label className="text-[11px] font-semibold text-muted-foreground uppercase">
+                Note / Remarks (Optional)
+              </label>
+              <Textarea
+                placeholder="Additional notes for drawer closing or settlement handover..."
+                value={dailySettleNote}
+                onChange={(e) => setDailySettleNote(e.target.value)}
+                className="text-xs min-h-[60px]"
+              />
+            </div>
+
+            <DialogFooter className="pt-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setDailySettlementDialogOpen(false)}
+                disabled={isSubmittingDailySettlement}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                size="sm"
+                disabled={isSubmittingDailySettlement || dailySettleTransferAmount <= 0}
+                className="bg-emerald-600 hover:bg-emerald-700 text-white font-medium"
+              >
+                {isSubmittingDailySettlement ? (
+                  <>
+                    <Loader2Icon className="size-3.5 mr-1.5 animate-spin" />
+                    Processing Settlement...
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle2Icon className="size-3.5 mr-1.5" />
+                    Confirm & Sweep Float
+                  </>
+                )}
+              </Button>
+            </DialogFooter>
+          </form>
         </DialogContent>
       </Dialog>
     </div>

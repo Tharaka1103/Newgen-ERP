@@ -122,6 +122,164 @@ export async function getAllTransactionsAdminAction(params: AdminTransactionsFil
   }
 }
 
+export async function getFilteredTransactionsForPdfAction(params: AdminTransactionsFilterParams = {}) {
+  const session = await auth();
+  if (!session?.user?.id || !isAdmin(session.user as any)) {
+    return { success: false, error: "Unauthorized. Admin privileges required." };
+  }
+
+  try {
+    await connectDB();
+
+    const query: Record<string, unknown> = {
+      isDeleted: { $ne: true },
+    };
+
+    let shopName = "All Branches";
+    let typeLabel = "All Types";
+    let paymentMethodLabel = "All Methods";
+    let bankAccountLabel = "All Accounts";
+    let categoryLabel = "All Categories";
+    let statusLabel = "All Statuses";
+
+    if (params.shopId && params.shopId !== "ALL") {
+      query.shop = new mongoose.Types.ObjectId(params.shopId);
+      const sh = await Shop.findById(params.shopId).select("name code").lean();
+      if (sh) shopName = `${sh.name} (${sh.code})`;
+    }
+
+    if (params.type && params.type !== "ALL") {
+      query.type = params.type;
+      typeLabel = params.type;
+    }
+
+    if (params.paymentMethod && params.paymentMethod !== "ALL") {
+      query.paymentMethod = params.paymentMethod;
+      paymentMethodLabel = params.paymentMethod.replace(/_/g, " ");
+    }
+
+    if (params.bankAccountId && params.bankAccountId !== "ALL") {
+      query.bankAccount = new mongoose.Types.ObjectId(params.bankAccountId);
+      const bk = await BankAccount.findById(params.bankAccountId).select("bankName accountNumber").lean();
+      if (bk) bankAccountLabel = `${bk.bankName} - ${bk.accountNumber}`;
+    }
+
+    if (params.categoryId && params.categoryId !== "ALL") {
+      query.category = new mongoose.Types.ObjectId(params.categoryId);
+      const cat = await Category.findById(params.categoryId).select("name").lean();
+      if (cat) categoryLabel = cat.name;
+    }
+
+    if (params.status && params.status !== "ALL") {
+      query.status = params.status;
+      statusLabel = params.status;
+    }
+
+    let dateRangeLabel = "All Time";
+    if (params.startDate || params.endDate) {
+      const dateFilter: Record<string, unknown> = {};
+      if (params.startDate) {
+        dateFilter.$gte = new Date(params.startDate);
+      }
+      if (params.endDate) {
+        const end = new Date(params.endDate);
+        end.setHours(23, 59, 59, 999);
+        dateFilter.$lte = end;
+      }
+      query.date = dateFilter;
+      if (params.startDate && params.endDate) {
+        dateRangeLabel = `${params.startDate} to ${params.endDate}`;
+      } else if (params.startDate) {
+        dateRangeLabel = `From ${params.startDate}`;
+      } else if (params.endDate) {
+        dateRangeLabel = `Until ${params.endDate}`;
+      }
+    }
+
+    if (params.search && params.search.trim().length > 0) {
+      const cleanSearch = sanitizeInput(params.search.trim());
+      query.$or = [
+        { billNumber: { $regex: cleanSearch, $options: "i" } },
+        { reason: { $regex: cleanSearch, $options: "i" } },
+        { itemCode: { $regex: cleanSearch, $options: "i" } },
+      ];
+    }
+
+    // Sort chronologically for statement ledger (oldest to newest)
+    const records = await FinanceRecord.find(query)
+      .populate("shop", "name code shopType")
+      .populate("category", "name type colorToken")
+      .populate("bankAccount", "bankName accountName accountNumber")
+      .populate("relatedBranch", "name code")
+      .populate("createdBy", "name email")
+      .populate("reviewedBy", "name email")
+      .sort({ date: 1, createdAt: 1 })
+      .limit(3000)
+      .lean();
+
+    let totalIncome = 0;
+    let totalExpense = 0;
+    let approvedIncome = 0;
+    let approvedExpense = 0;
+    let runningBalance = 0;
+
+    const enrichedRecords = records.map((r: any) => {
+      const amt = r.amount || 0;
+      const appAmt = typeof r.approvedAmount === "number" ? r.approvedAmount : amt;
+      const effectiveAmount = r.status === "APPROVED" ? appAmt : amt;
+
+      if (r.type === "INCOME") {
+        totalIncome += amt;
+        if (r.status === "APPROVED") approvedIncome += appAmt;
+      } else {
+        totalExpense += amt;
+        if (r.status === "APPROVED") approvedExpense += appAmt;
+      }
+
+      if (r.status !== "REJECTED") {
+        if (r.type === "INCOME") {
+          runningBalance += effectiveAmount;
+        } else {
+          runningBalance -= effectiveAmount;
+        }
+      }
+
+      return {
+        ...r,
+        currentBalance: runningBalance,
+      };
+    });
+
+    const netBalance = approvedIncome - approvedExpense;
+
+    return {
+      success: true,
+      records: JSON.parse(JSON.stringify(enrichedRecords)),
+      totalCount: enrichedRecords.length,
+      summary: {
+        totalIncome,
+        totalExpense,
+        approvedIncome,
+        approvedExpense,
+        netBalance,
+      },
+      appliedFilters: {
+        shopName,
+        typeLabel,
+        paymentMethodLabel,
+        bankAccountLabel,
+        categoryLabel,
+        statusLabel,
+        dateRangeLabel,
+        searchQuery: params.search?.trim() || "None",
+      },
+    };
+  } catch (error) {
+    console.error("Get filtered transactions for PDF error:", error);
+    return { success: false, error: "Failed to fetch statement records for PDF." };
+  }
+}
+
 export async function adminEditTransactionAction(formData: unknown) {
   const session = await auth();
   if (!session?.user?.id || !isAdmin(session.user as any)) {

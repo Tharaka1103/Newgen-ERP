@@ -147,15 +147,15 @@ export function AppSidebar({ user }: AppSidebarProps) {
 
   const staffNav = isInventoryShop
     ? [
-        { title: "Dashboard", href: "/dashboard/staff/dashboard", icon: LayoutDashboardIcon },
-        { title: "Inventory Management", href: "/dashboard/staff/inventory", icon: PackageIcon },
-        { title: "My Settings", href: "/dashboard/staff/settings", icon: SettingsIcon },
-      ]
+      { title: "Dashboard", href: "/dashboard/staff/dashboard", icon: LayoutDashboardIcon },
+      { title: "Inventory Management", href: "/dashboard/staff/inventory", icon: PackageIcon },
+      { title: "My Settings", href: "/dashboard/staff/settings", icon: SettingsIcon },
+    ]
     : [
-        { title: "Dashboard", href: "/dashboard/staff/dashboard", icon: LayoutDashboardIcon },
-        { title: "Finances & Entries", href: "/dashboard/staff/finances", icon: ReceiptIcon },
-        { title: "My Settings", href: "/dashboard/staff/settings", icon: SettingsIcon },
-      ];
+      { title: "Dashboard", href: "/dashboard/staff/dashboard", icon: LayoutDashboardIcon },
+      { title: "Finances & Entries", href: "/dashboard/staff/finances", icon: ReceiptIcon },
+      { title: "My Settings", href: "/dashboard/staff/settings", icon: SettingsIcon },
+    ];
 
   const verifierNav = [
     { title: "Dashboard", href: "/dashboard/verifier/dashboard", icon: LayoutDashboardIcon },
@@ -293,7 +293,7 @@ export function AppSidebar({ user }: AppSidebarProps) {
 
         {/* Version Number (positioned above the logout button) */}
         <div className="flex items-center justify-between text-[11px] text-muted-foreground px-1">
-          <span>v1.5.3</span>
+          <span>v1.5.5</span>
           <span className="flex items-center gap-1.5">
             <span className="text-[10px]">Online</span>
             <span className="size-1.5 rounded-full bg-green-400 animate-pulse" />

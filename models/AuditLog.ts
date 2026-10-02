@@ -7,7 +7,7 @@ export interface IAuditLog extends Document {
   actorEmail?: string;
   actorRole?: string;
   action: string;
-  targetType: "FinanceRecord" | "User" | "Shop" | "Category" | "BankAccount" | "PettyCashAccount" | "CommunicationItem" | "CustomerCredit" | "CreditTransaction" | "ItemWastage";
+  targetType: "FinanceRecord" | "User" | "Shop" | "Category" | "BankAccount" | "PettyCashAccount" | "CommunicationItem" | "CustomerCredit" | "CreditTransaction" | "ItemWastage" | "DailySettlement";
   targetId?: mongoose.Types.ObjectId | null;
   metadata?: Record<string, unknown>;
   ipAddress?: string;
@@ -42,7 +42,7 @@ const AuditLogSchema = new Schema<IAuditLog>(
     },
     targetType: {
       type: String,
-      enum: ["FinanceRecord", "User", "Shop", "Category", "BankAccount", "PettyCashAccount", "CommunicationItem", "CustomerCredit", "CreditTransaction", "ItemWastage"],
+      enum: ["FinanceRecord", "User", "Shop", "Category", "BankAccount", "PettyCashAccount", "CommunicationItem", "CustomerCredit", "CreditTransaction", "ItemWastage", "DailySettlement"],
       required: true,
       index: true,
     },

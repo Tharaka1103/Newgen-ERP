@@ -3,11 +3,13 @@
 import * as React from "react";
 import {
   getAllTransactionsAdminAction,
+  getFilteredTransactionsForPdfAction,
   adminEditTransactionAction,
   adminDeleteTransactionAction,
   adminBulkPermanentDeleteTransactionsAction,
   adminGetBulkDeleteEligibleCountAction,
 } from "@/actions/adminTransactions";
+import { exportTransactionsStatementPDF } from "@/lib/pdf/transactions-statement-pdf";
 import { DataTable } from "@/components/shared/data-table";
 import { ColumnDef } from "@tanstack/react-table";
 import { Button } from "@/components/ui/button";
@@ -58,6 +60,7 @@ import {
   RotateCcwIcon,
   ShieldAlertIcon,
   StoreIcon,
+  FileTextIcon,
 } from "lucide-react";
 import { toast } from "@/components/ui/toast";
 
@@ -133,6 +136,7 @@ export function AllTransactionsView({
   const [bulkDeleteConfirmation, setBulkDeleteConfirmation] = React.useState("");
   const [isBulkDeleting, setIsBulkDeleting] = React.useState(false);
   const [isCheckingEligible, setIsCheckingEligible] = React.useState(false);
+  const [isGeneratingPdf, setIsGeneratingPdf] = React.useState(false);
 
   const editForm = useForm<AdminEditFinanceRecordInput>({
     resolver: zodResolver(adminEditFinanceRecordSchema),
@@ -380,6 +384,7 @@ export function AllTransactionsView({
       "Discount (LKR)",
       "Net Amount (LKR)",
       "Approved Amount (LKR)",
+      "Current Balance (LKR)",
       "Status",
       "Created By",
       "Reviewed By",
@@ -405,6 +410,7 @@ export function AllTransactionsView({
       r.discountPrice !== undefined ? Number(r.discountPrice).toFixed(2) : "",
       Number(r.amount || 0).toFixed(2),
       r.approvedAmount !== null && r.approvedAmount !== undefined ? Number(r.approvedAmount).toFixed(2) : "",
+      r.runningBalance !== undefined && r.runningBalance !== null ? Number(r.runningBalance).toFixed(2) : "",
       r.status || "",
       r.createdBy?.name || r.createdBy?.email || "Unknown",
       r.reviewedBy?.name || r.reviewedBy?.email || "",
@@ -435,6 +441,61 @@ export function AllTransactionsView({
       description: `Exported ${records.length} transactions successfully.`,
       type: "success",
     });
+  };
+
+  const handleDownloadStatementPDF = async () => {
+    try {
+      setIsGeneratingPdf(true);
+      toast.create({
+        title: "Preparing Statement PDF...",
+        description: "Compiling filtered transactions ledger and computing summary metrics.",
+        type: "info",
+      });
+
+      const res = await getFilteredTransactionsForPdfAction({
+        shopId: shopFilter !== "ALL" ? shopFilter : undefined,
+        type: typeFilter !== "ALL" ? typeFilter : undefined,
+        paymentMethod: paymentMethodFilter !== "ALL" ? paymentMethodFilter : undefined,
+        bankAccountId: bankAccountFilter !== "ALL" ? bankAccountFilter : undefined,
+        categoryId: categoryFilter !== "ALL" ? categoryFilter : undefined,
+        status: statusFilter !== "ALL" ? statusFilter : undefined,
+        startDate: startDate || undefined,
+        endDate: endDate || undefined,
+        search: search.trim() || undefined,
+      });
+
+      if (!res.success || !res.records || res.records.length === 0) {
+        toast.create({
+          title: "No records found",
+          description: res.error || "There are no transactions matching your active filter criteria.",
+          type: "warning",
+        });
+        setIsGeneratingPdf(false);
+        return;
+      }
+
+      exportTransactionsStatementPDF({
+        records: res.records,
+        summary: res.summary!,
+        filters: res.appliedFilters!,
+        generatedBy: "Administrator",
+      });
+
+      toast.create({
+        title: "Statement Downloaded",
+        description: `Successfully exported official statement with ${res.records.length} records.`,
+        type: "success",
+      });
+    } catch (err: any) {
+      console.error("PDF generation failed:", err);
+      toast.create({
+        title: "PDF Generation Failed",
+        description: err?.message || "An unexpected error occurred while generating PDF.",
+        type: "error",
+      });
+    } finally {
+      setIsGeneratingPdf(false);
+    }
   };
 
   const columns: ColumnDef<any>[] = [
@@ -632,6 +693,27 @@ export function AllTransactionsView({
       },
     },
     {
+      accessorKey: "runningBalance",
+      header: "Current Balance",
+      cell: ({ row }) => {
+        const bal = row.original.runningBalance;
+        if (bal === undefined || bal === null) {
+          return <span className="text-muted-foreground text-xs font-mono">-</span>;
+        }
+        return (
+          <div className="flex flex-col text-right">
+            <span
+              className={`font-mono text-xs font-semibold ${
+                bal >= 0 ? "text-foreground" : "text-destructive"
+              }`}
+            >
+              LKR {Number(bal).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </span>
+          </div>
+        );
+      },
+    },
+    {
       accessorKey: "status",
       header: "Status",
       cell: ({ row }) => <StatusBadge status={row.original.status} />,
@@ -690,6 +772,21 @@ export function AllTransactionsView({
           >
             <RefreshCwIcon className={`size-3.5 mr-1.5 ${loading ? "animate-spin" : ""}`} />
             Refresh
+          </Button>
+
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleDownloadStatementPDF}
+            disabled={isGeneratingPdf}
+            className="h-8 text-xs font-medium border-rose-200 bg-rose-50/70 text-rose-700 hover:bg-rose-100 hover:text-rose-800 dark:border-rose-900/50 dark:bg-rose-950/30 dark:text-rose-300 dark:hover:bg-rose-900/40"
+          >
+            {isGeneratingPdf ? (
+              <Loader2Icon className="size-3.5 mr-1.5 animate-spin" />
+            ) : (
+              <FileTextIcon className="size-3.5 mr-1.5 text-rose-600 dark:text-rose-400" />
+            )}
+            Download Statement (PDF)
           </Button>
 
           <Button
