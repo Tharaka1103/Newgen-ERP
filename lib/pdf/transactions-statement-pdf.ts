@@ -261,9 +261,17 @@ export function exportTransactionsStatementPDF({
     const timeStr = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: true });
 
     let branchName = record.shop?.name || "-";
-    if (record.beneficiaryShop && record.beneficiaryShop.name && record.beneficiaryShop._id !== record.shop?._id) {
-      branchName = `${record.beneficiaryShop.name} (via ${record.shop?.code || "Branch"})`;
+    const isFilteredForBeneficiary = Boolean(
+      filters.shopName &&
+      record.beneficiaryShop?.name &&
+      filters.shopName.toLowerCase().includes(record.beneficiaryShop.name.toLowerCase()) &&
+      record.beneficiaryShop?._id !== record.shop?._id
+    );
+
+    if (isFilteredForBeneficiary && record.shop?.code) {
+      branchName = `${record.beneficiaryShop?.name} (via ${record.shop.code})`;
     }
+
     const billNo = record.billNumber || "-";
     const category = record.category?.name || "General";
     const method = (record.paymentMethod || "").replace(/_/g, " ");
@@ -271,6 +279,9 @@ export function exportTransactionsStatementPDF({
     let desc = record.reason || "";
     if (record.itemName) {
       desc = `[${record.itemCode || "ITEM"}] ${record.itemName} (Qty: ${record.quantity || 1}) ${desc ? `| ${desc}` : ""}`;
+    }
+    if (record.beneficiaryShop?.name && record.beneficiaryShop._id !== record.shop?._id) {
+      desc += ` [For: ${record.beneficiaryShop.name}]`;
     }
     if (record.bankAccount?.bankName) {
       desc += ` [${record.bankAccount.bankName}]`;

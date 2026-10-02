@@ -878,47 +878,28 @@ export async function createCommunicationSaleBatchAction(payload: {
       }
     }
 
-    // Resolve category: If branch-related, it is an inter-branch operational EXPENSE for the target branch
-    let category = null;
-    if (isBranchRelated) {
+    // Resolve category for communication POS sale
+    let category = await Category.findOne({
+      name: { $regex: /^communication items$/i },
+      type: "INCOME",
+      isActive: true,
+    });
+    if (!category) {
       category = await Category.findOne({
-        name: { $regex: /printing|communication/i },
-        type: "EXPENSE",
-        isActive: true,
-      });
-      if (!category) {
-        category = await Category.create({
-          name: "Printing & Communication Expenses",
-          description: "Inter-branch printing, photocopying, and communication services",
-          type: "EXPENSE",
-          colorToken: "chart-2",
-          isActive: true,
-          createdBy: new mongoose.Types.ObjectId(session.user.id),
-        });
-      }
-    } else {
-      category = await Category.findOne({
-        name: { $regex: /^communication items$/i },
+        name: { $regex: /^communication/i },
         type: "INCOME",
         isActive: true,
       });
-      if (!category) {
-        category = await Category.findOne({
-          name: { $regex: /^communication/i },
-          type: "INCOME",
-          isActive: true,
-        });
-      }
-      if (!category) {
-        category = await Category.create({
-          name: "Communication Items",
-          description: "Revenue from communication shop sales and services",
-          type: "INCOME",
-          colorToken: "chart-1",
-          isActive: true,
-          createdBy: new mongoose.Types.ObjectId(session.user.id),
-        });
-      }
+    }
+    if (!category) {
+      category = await Category.create({
+        name: "Communication Items",
+        description: "Revenue from communication shop sales and services",
+        type: "INCOME",
+        colorToken: "chart-1",
+        isActive: true,
+        createdBy: new mongoose.Types.ObjectId(session.user.id),
+      });
     }
 
     const now = new Date();
@@ -1023,9 +1004,9 @@ export async function createCommunicationSaleBatchAction(payload: {
         billNumber,
         reason: recordReason,
         amount: netAmount,
-        type: isBranchRelated ? "EXPENSE" : "INCOME",
-        status: recordStatus,
-        approvedAmount: isBranchRelated ? null : netAmount,
+        type: "INCOME",
+        status: "APPROVED",
+        approvedAmount: netAmount,
         runningBalance: 0,
         isLocked,
 

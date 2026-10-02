@@ -129,7 +129,10 @@ export async function getAllTransactionsAdminAction(params: AdminTransactionsFil
           ...r,
           type: resolveShopEffectiveType(r, params.shopId!),
         }))
-      : rawRecords;
+      : rawRecords.map((r: any) => ({
+          ...r,
+          type: r.isCommunicationItem ? "INCOME" : r.type,
+        }));
 
     return {
       success: true,
@@ -277,7 +280,7 @@ export async function getFilteredTransactionsForPdfAction(params: AdminTransacti
 
       const effectiveType: "INCOME" | "EXPENSE" = targetShopIdStr
         ? resolveShopEffectiveType(r, targetShopIdStr)
-        : (r.type === "EXPENSE" ? "EXPENSE" : "INCOME");
+        : (r.isCommunicationItem ? "INCOME" : (r.type === "EXPENSE" ? "EXPENSE" : "INCOME"));
 
       if (effectiveType === "INCOME") {
         totalIncome += amt;

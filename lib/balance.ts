@@ -33,6 +33,11 @@ export function resolveShopEffectiveType(
     return "INCOME";
   }
 
+  // Communication retail sales are always retail INCOME for the communication shop that performed them
+  if (directShopId === targetIdStr && record.isCommunicationItem) {
+    return "INCOME";
+  }
+
   return record.type === "EXPENSE" ? "EXPENSE" : "INCOME";
 }
 
@@ -63,11 +68,12 @@ export async function recalculateShopRunningBalance(
     };
   } else {
     // For a standard branch:
-    // Records created at this shop (non-cross-branch) OR transactions made for this branch at other branches (tuition income or print expenses)
+    // Physical cash transactions at this shop OR tuition collections collected elsewhere for this branch.
+    // As per business rule: Communication retail sales (photocopy/prints) do NOT deduct cash balance of the target branch (only revenue/P&L).
     query = {
       $or: [
         { shop: shopObjId, isCrossBranchPayment: { $ne: true } },
-        { beneficiaryShop: shopObjId, isCrossBranchPayment: true },
+        { beneficiaryShop: shopObjId, isCrossBranchPayment: true, isCommunicationItem: { $ne: true } },
       ],
       isDeleted: { $ne: true },
     };
@@ -89,24 +95,28 @@ export async function recalculateShopRunningBalance(
 
   for (const record of records) {
     if (record.status === "REJECTED") {
-      bulkOps.push({
-        updateOne: {
-          filter: { _id: record._id },
-          update: { $set: { runningBalance: currentBalance } },
-        },
-      });
+      if (record.shop?.toString() === shopObjId.toString()) {
+        bulkOps.push({
+          updateOne: {
+            filter: { _id: record._id },
+            update: { $set: { runningBalance: currentBalance } },
+          },
+        });
+      }
       continue;
     }
 
     // CREDIT sales do not increase shop physical cash balance;
     // only subsequent cash debt repayments enter the shop cash balance.
     if (record.paymentMethod === "CREDIT") {
-      bulkOps.push({
-        updateOne: {
-          filter: { _id: record._id },
-          update: { $set: { runningBalance: currentBalance } },
-        },
-      });
+      if (record.shop?.toString() === shopObjId.toString()) {
+        bulkOps.push({
+          updateOne: {
+            filter: { _id: record._id },
+            update: { $set: { runningBalance: currentBalance } },
+          },
+        });
+      }
       continue;
     }
 
@@ -123,12 +133,16 @@ export async function recalculateShopRunningBalance(
       currentBalance -= effectiveAmount;
     }
 
-    bulkOps.push({
-      updateOne: {
-        filter: { _id: record._id },
-        update: { $set: { runningBalance: currentBalance } },
-      },
-    });
+    // Only update the runningBalance of records that belong to this shop.
+    // Records belonging to other shops maintain their own origin shop's cash drawer running balance.
+    if (record.shop?.toString() === shopObjId.toString()) {
+      bulkOps.push({
+        updateOne: {
+          filter: { _id: record._id },
+          update: { $set: { runningBalance: currentBalance } },
+        },
+      });
+    }
   }
 
   if (bulkOps.length > 0) {
@@ -150,12 +164,15 @@ export async function getShopCashBalance(
   await connectDB();
   const shopObjId = new mongoose.Types.ObjectId(shopId.toString());
 
-  // 1. Standard non-cross-branch cash transactions at this shop
+  // 1. Standard non-cross-branch cash transactions at this shop + Communication retail sales performed at this shop
   const standardCashAgg = await FinanceRecord.aggregate([
     {
       $match: {
         shop: shopObjId,
-        isCrossBranchPayment: { $ne: true },
+        $or: [
+          { isCrossBranchPayment: { $ne: true } },
+          { isCommunicationItem: true },
+        ],
         isDeleted: { $ne: true },
         status: { $ne: "REJECTED" },
         paymentMethod: { $ne: "CREDIT" },
@@ -192,12 +209,13 @@ export async function getShopCashBalance(
   // 2. Cross-branch cash physically collected AT this shop (as collectingShop)
   // While UNSETTLED: cash physically sits in this shop's drawer (+effectiveAmount).
   // Once SETTLED: cash was handed over to beneficiary branch or deposited into bank (removed from drawer).
-  // Note: Only applies to INCOME records where physical cash was collected from customers!
+  // Note: Only applies to third-party tuition collections where physical cash was collected from customers!
   const collectingCashAgg = await FinanceRecord.aggregate([
     {
       $match: {
         collectingShop: shopObjId,
         isCrossBranchPayment: true,
+        isCommunicationItem: { $ne: true },
         type: "INCOME",
         isDeleted: { $ne: true },
         status: "APPROVED",
@@ -234,6 +252,7 @@ export async function getShopCashBalance(
       $match: {
         beneficiaryShop: shopObjId,
         isCrossBranchPayment: true,
+        isCommunicationItem: { $ne: true },
         type: "INCOME",
         isDeleted: { $ne: true },
         status: "APPROVED",
