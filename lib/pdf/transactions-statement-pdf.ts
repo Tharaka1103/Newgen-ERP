@@ -1,11 +1,19 @@
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
+import { getRecordExactDate } from "@/lib/dateUtils";
 
 export interface TransactionPdfRecord {
   _id: string;
   date: string | Date;
   createdAt?: string | Date;
   shop?: {
+    _id?: string;
+    name?: string;
+    code?: string;
+    shopType?: string;
+  };
+  beneficiaryShop?: {
+    _id?: string;
     name?: string;
     code?: string;
     shopType?: string;
@@ -248,12 +256,14 @@ export function exportTransactionsStatementPDF({
   // 5. Table of Transactions with Chronological Running Balance
   let cumulativeBalance = 0;
   const tableData = records.map((record, index) => {
-    const rawDate = record.createdAt || record.date;
-    const d = new Date(rawDate);
+    const d = getRecordExactDate(record);
     const dateStr = d.toLocaleDateString("en-CA"); // YYYY-MM-DD
-    const timeStr = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    const timeStr = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: true });
 
-    const branchName = record.shop?.name || "-";
+    let branchName = record.shop?.name || "-";
+    if (record.beneficiaryShop && record.beneficiaryShop.name && record.beneficiaryShop._id !== record.shop?._id) {
+      branchName = `${record.beneficiaryShop.name} (via ${record.shop?.code || "Branch"})`;
+    }
     const billNo = record.billNumber || "-";
     const category = record.category?.name || "General";
     const method = (record.paymentMethod || "").replace(/_/g, " ");

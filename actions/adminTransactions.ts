@@ -13,8 +13,8 @@ import {
   adminDeleteFinanceRecordSchema,
 } from "@/schemas/finance";
 import { isAdmin } from "@/lib/rbac";
-import { recalculateShopRunningBalance } from "@/lib/balance";
 import { logAuditEvent } from "@/lib/audit";
+import { recalculateShopRunningBalance, getRecordExactTimestamp, resolveShopEffectiveType } from "@/lib/balance";
 import mongoose from "mongoose";
 
 interface AdminTransactionsFilterParams {
@@ -45,7 +45,20 @@ export async function getAllTransactionsAdminAction(params: AdminTransactionsFil
     };
 
     if (params.shopId && params.shopId !== "ALL") {
-      query.shop = new mongoose.Types.ObjectId(params.shopId);
+      const targetShopObjId = new mongoose.Types.ObjectId(params.shopId);
+      const targetShopDoc = await Shop.findById(targetShopObjId).select("name code shopType").lean();
+      if (targetShopDoc?.shopType === "COMMUNICATION") {
+        query.shop = targetShopObjId;
+        query.$nor = [
+          { isCrossBranchPayment: true, isCommunicationItem: { $ne: true }, beneficiaryShop: { $ne: targetShopObjId } },
+          { isRelatedToBranch: true, isCommunicationItem: { $ne: true }, relatedBranch: { $ne: targetShopObjId } },
+        ];
+      } else {
+        query.$or = [
+          { shop: targetShopObjId, isCrossBranchPayment: { $ne: true } },
+          { beneficiaryShop: targetShopObjId, isCrossBranchPayment: true },
+        ];
+      }
     }
 
     if (params.type && params.type !== "ALL") {
@@ -94,12 +107,14 @@ export async function getAllTransactionsAdminAction(params: AdminTransactionsFil
     const limit = Math.max(1, Math.min(200, Number(params.limit) || 20));
     const skip = (page - 1) * limit;
 
-    const [records, total] = await Promise.all([
+    const [rawRecords, total] = await Promise.all([
       FinanceRecord.find(query)
         .populate("shop", "name code shopType")
         .populate("category", "name type colorToken")
         .populate("bankAccount", "bankName accountName accountNumber")
         .populate("relatedBranch", "name code")
+        .populate("beneficiaryShop", "name code shopType")
+        .populate("collectingShop", "name code shopType")
         .populate("createdBy", "name email")
         .populate("reviewedBy", "name email")
         .sort({ date: -1, createdAt: -1 })
@@ -108,6 +123,13 @@ export async function getAllTransactionsAdminAction(params: AdminTransactionsFil
         .lean(),
       FinanceRecord.countDocuments(query),
     ]);
+
+    const records = (params.shopId && params.shopId !== "ALL")
+      ? rawRecords.map((r: any) => ({
+          ...r,
+          type: resolveShopEffectiveType(r, params.shopId!),
+        }))
+      : rawRecords;
 
     return {
       success: true,
@@ -143,14 +165,31 @@ export async function getFilteredTransactionsForPdfAction(params: AdminTransacti
     let statusLabel = "All Statuses";
 
     if (params.shopId && params.shopId !== "ALL") {
-      query.shop = new mongoose.Types.ObjectId(params.shopId);
-      const sh = await Shop.findById(params.shopId).select("name code").lean();
-      if (sh) shopName = `${sh.name} (${sh.code})`;
+      const targetShopObjId = new mongoose.Types.ObjectId(params.shopId);
+      const targetShopDoc = await Shop.findById(targetShopObjId).select("name code shopType").lean();
+      if (targetShopDoc) {
+        shopName = `${targetShopDoc.name} (${targetShopDoc.code})`;
+        if (targetShopDoc.shopType === "COMMUNICATION") {
+          query.shop = targetShopObjId;
+          query.$nor = [
+            { isCrossBranchPayment: true, isCommunicationItem: { $ne: true }, beneficiaryShop: { $ne: targetShopObjId } },
+            { isRelatedToBranch: true, isCommunicationItem: { $ne: true }, relatedBranch: { $ne: targetShopObjId } },
+          ];
+        } else {
+          query.$or = [
+            { shop: targetShopObjId, isCrossBranchPayment: { $ne: true } },
+            { beneficiaryShop: targetShopObjId, isCrossBranchPayment: true },
+          ];
+        }
+      }
     }
 
     if (params.type && params.type !== "ALL") {
-      query.type = params.type;
       typeLabel = params.type;
+      // Only filter in Mongo if all shops are selected; otherwise filter by effectiveType after resolving
+      if (!params.shopId || params.shopId === "ALL") {
+        query.type = params.type;
+      }
     }
 
     if (params.paymentMethod && params.paymentMethod !== "ALL") {
@@ -205,17 +244,23 @@ export async function getFilteredTransactionsForPdfAction(params: AdminTransacti
       ];
     }
 
-    // Sort chronologically for statement ledger (oldest to newest)
-    const records = await FinanceRecord.find(query)
+    // Retrieve records
+    const rawRecords = await FinanceRecord.find(query)
       .populate("shop", "name code shopType")
       .populate("category", "name type colorToken")
       .populate("bankAccount", "bankName accountName accountNumber")
       .populate("relatedBranch", "name code")
+      .populate("beneficiaryShop", "name code shopType")
+      .populate("collectingShop", "name code shopType")
       .populate("createdBy", "name email")
       .populate("reviewedBy", "name email")
-      .sort({ date: 1, createdAt: 1 })
       .limit(3000)
       .lean();
+
+    // Sort strictly chronologically by exact date and time (oldest to newest)
+    const sortedRecords = (rawRecords as any[]).sort((a: any, b: any) => {
+      return getRecordExactTimestamp(a) - getRecordExactTimestamp(b);
+    });
 
     let totalIncome = 0;
     let totalExpense = 0;
@@ -223,12 +268,18 @@ export async function getFilteredTransactionsForPdfAction(params: AdminTransacti
     let approvedExpense = 0;
     let runningBalance = 0;
 
-    const enrichedRecords = records.map((r: any) => {
+    const targetShopIdStr = params.shopId && params.shopId !== "ALL" ? params.shopId : undefined;
+
+    const enrichedRecords = sortedRecords.map((r: any) => {
       const amt = r.amount || 0;
       const appAmt = typeof r.approvedAmount === "number" ? r.approvedAmount : amt;
       const effectiveAmount = r.status === "APPROVED" ? appAmt : amt;
 
-      if (r.type === "INCOME") {
+      const effectiveType: "INCOME" | "EXPENSE" = targetShopIdStr
+        ? resolveShopEffectiveType(r, targetShopIdStr)
+        : (r.type === "EXPENSE" ? "EXPENSE" : "INCOME");
+
+      if (effectiveType === "INCOME") {
         totalIncome += amt;
         if (r.status === "APPROVED") approvedIncome += appAmt;
       } else {
@@ -237,7 +288,7 @@ export async function getFilteredTransactionsForPdfAction(params: AdminTransacti
       }
 
       if (r.status !== "REJECTED") {
-        if (r.type === "INCOME") {
+        if (effectiveType === "INCOME") {
           runningBalance += effectiveAmount;
         } else {
           runningBalance -= effectiveAmount;
@@ -246,16 +297,22 @@ export async function getFilteredTransactionsForPdfAction(params: AdminTransacti
 
       return {
         ...r,
+        type: effectiveType,
         currentBalance: runningBalance,
       };
     });
+
+    let finalRecords = enrichedRecords;
+    if (params.type && params.type !== "ALL") {
+      finalRecords = enrichedRecords.filter((r) => r.type === params.type);
+    }
 
     const netBalance = approvedIncome - approvedExpense;
 
     return {
       success: true,
-      records: JSON.parse(JSON.stringify(enrichedRecords)),
-      totalCount: enrichedRecords.length,
+      records: JSON.parse(JSON.stringify(finalRecords)),
+      totalCount: finalRecords.length,
       summary: {
         totalIncome,
         totalExpense,

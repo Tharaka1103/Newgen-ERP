@@ -1,18 +1,44 @@
 import connectDB from "./mongodb";
 import { FinanceRecord } from "@/models/FinanceRecord";
+import { Shop } from "@/models/Shop";
 import mongoose from "mongoose";
+
+import { getRecordExactDate, getRecordExactTimestamp } from "./dateUtils";
+export { getRecordExactDate, getRecordExactTimestamp };
+
+/**
+ * Resolves whether a record is an INCOME or EXPENSE from the viewpoint of a specific shop.
+ */
+export function resolveShopEffectiveType(
+  record: {
+    type: "INCOME" | "EXPENSE" | string;
+    isCommunicationItem?: boolean;
+    isCrossBranchPayment?: boolean;
+    beneficiaryShop?: any;
+    shop?: any;
+  },
+  targetShopId: string | mongoose.Types.ObjectId
+): "INCOME" | "EXPENSE" {
+  const targetIdStr = targetShopId.toString();
+  const bShopId = record.beneficiaryShop?._id?.toString() || record.beneficiaryShop?.toString();
+  const directShopId = record.shop?._id?.toString() || record.shop?.toString();
+
+  // If this record was collected / executed by another branch (e.g. Communication) for the target shop
+  if (bShopId === targetIdStr && directShopId !== targetIdStr) {
+    // Communication sales/printing done for this branch is an EXPENSE for this branch
+    if (record.isCommunicationItem) {
+      return "EXPENSE";
+    }
+    // Class fees or payments collected at communication for this branch is an INCOME for this branch
+    return "INCOME";
+  }
+
+  return record.type === "EXPENSE" ? "EXPENSE" : "INCOME";
+}
 
 /**
  * Recalculates the cumulative running balance for a shop in chronological order.
  * Triggers upon create/update/delete/approval of records.
- *
- * Algorithm:
- * - Filter out soft-deleted records (isDeleted !== true).
- * - Sort records by date ascending, then createdAt ascending.
- * - For REJECTED records: net impact is 0.
- * - For APPROVED records: net impact uses approvedAmount ?? amount.
- * - For PENDING records: net impact uses submitted amount.
- * - INCOME adds to running balance, EXPENSE subtracts.
  */
 export async function recalculateShopRunningBalance(
   shopId: string | mongoose.Types.ObjectId,
@@ -20,18 +46,43 @@ export async function recalculateShopRunningBalance(
 ): Promise<void> {
   await connectDB();
   const shopObjId = new mongoose.Types.ObjectId(shopId.toString());
+  const shopDoc = await Shop.findById(shopObjId).select("shopType").lean();
+  const isComm = shopDoc?.shopType === "COMMUNICATION";
 
-  const records = await FinanceRecord.find({
-    $or: [
-      { shop: shopObjId, isCrossBranchPayment: { $ne: true } },
-      { beneficiaryShop: shopObjId, isCrossBranchPayment: true },
-    ],
-    isDeleted: { $ne: true },
-  })
-    .sort({ date: 1, createdAt: 1 })
-    .select("_id type status amount approvedAmount runningBalance paymentMethod");
+  let query: any;
+  if (isComm) {
+    // For communication shop: ONLY records created at this communication shop.
+    // Exclude other branch tuition collections (which are income for those branches, not communication).
+    query = {
+      shop: shopObjId,
+      isDeleted: { $ne: true },
+      $nor: [
+        { isCrossBranchPayment: true, isCommunicationItem: { $ne: true }, beneficiaryShop: { $ne: shopObjId } },
+        { isRelatedToBranch: true, isCommunicationItem: { $ne: true }, relatedBranch: { $ne: shopObjId } },
+      ],
+    };
+  } else {
+    // For a standard branch:
+    // Records created at this shop (non-cross-branch) OR transactions made for this branch at other branches (tuition income or print expenses)
+    query = {
+      $or: [
+        { shop: shopObjId, isCrossBranchPayment: { $ne: true } },
+        { beneficiaryShop: shopObjId, isCrossBranchPayment: true },
+      ],
+      isDeleted: { $ne: true },
+    };
+  }
 
-  if (!records.length) return;
+  const rawRecords = await FinanceRecord.find(query)
+    .select("_id type status amount approvedAmount runningBalance paymentMethod isCrossBranchPayment beneficiaryShop shop isCommunicationItem date createdAt")
+    .lean();
+
+  if (!rawRecords.length) return;
+
+  // Sort strictly in chronological order by combined date and time
+  const records = rawRecords.sort((a, b) => {
+    return getRecordExactTimestamp(a) - getRecordExactTimestamp(b);
+  });
 
   const bulkOps = [];
   let currentBalance = 0;
@@ -64,7 +115,9 @@ export async function recalculateShopRunningBalance(
         ? record.approvedAmount
         : record.amount;
 
-    if (record.type === "INCOME") {
+    const effectiveType = resolveShopEffectiveType(record as any, shopObjId);
+
+    if (effectiveType === "INCOME") {
       currentBalance += effectiveAmount;
     } else {
       currentBalance -= effectiveAmount;

@@ -21,7 +21,7 @@ import {
   calculateUtilityBillCharges,
 } from "@/schemas/finance";
 import { canCreateFinanceRecord, canReviewFinanceRecord, isAdmin } from "@/lib/rbac";
-import { recalculateShopRunningBalance, getShopInterBranchDues } from "@/lib/balance";
+import { recalculateShopRunningBalance, getShopInterBranchDues, resolveShopEffectiveType } from "@/lib/balance";
 import { logAuditEvent } from "@/lib/audit";
 import mongoose from "mongoose";
 import { revalidatePath } from "next/cache";
@@ -55,6 +55,8 @@ export async function getFinanceRecordsAction(params: GetFinanceRecordsParams = 
       isDeleted: { $ne: true },
     };
 
+    let targetShopForType: string | undefined;
+
     // RBAC: Staff can strictly ONLY view their assigned shop's records
     if (role === "STAFF") {
       const dbUser = await User.findById(session.user.id).select("shop shops").lean();
@@ -70,11 +72,39 @@ export async function getFinanceRecordsAction(params: GetFinanceRecordsParams = 
           unassignedStaff: true,
         };
       }
-      query.shop = new mongoose.Types.ObjectId(activeShopId);
+      targetShopForType = activeShopId;
+      const staffShopObjId = new mongoose.Types.ObjectId(activeShopId);
+      const staffShopDoc = await Shop.findById(staffShopObjId).select("shopType").lean();
+      if (staffShopDoc?.shopType === "COMMUNICATION") {
+        query.shop = staffShopObjId;
+        query.$nor = [
+          { isCrossBranchPayment: true, isCommunicationItem: { $ne: true }, beneficiaryShop: { $ne: staffShopObjId } },
+          { isRelatedToBranch: true, isCommunicationItem: { $ne: true }, relatedBranch: { $ne: staffShopObjId } },
+        ];
+      } else {
+        query.$or = [
+          { shop: staffShopObjId, isCrossBranchPayment: { $ne: true } },
+          { beneficiaryShop: staffShopObjId, isCrossBranchPayment: true },
+        ];
+      }
     } else {
       // Verifier and Admin can filter by any shop
       if (params.shopId && params.shopId !== "ALL") {
-        query.shop = new mongoose.Types.ObjectId(params.shopId);
+        targetShopForType = params.shopId;
+        const filterShopObjId = new mongoose.Types.ObjectId(params.shopId);
+        const filterShopDoc = await Shop.findById(filterShopObjId).select("shopType").lean();
+        if (filterShopDoc?.shopType === "COMMUNICATION") {
+          query.shop = filterShopObjId;
+          query.$nor = [
+            { isCrossBranchPayment: true, isCommunicationItem: { $ne: true }, beneficiaryShop: { $ne: filterShopObjId } },
+            { isRelatedToBranch: true, isCommunicationItem: { $ne: true }, relatedBranch: { $ne: filterShopObjId } },
+          ];
+        } else {
+          query.$or = [
+            { shop: filterShopObjId, isCrossBranchPayment: { $ne: true } },
+            { beneficiaryShop: filterShopObjId, isCrossBranchPayment: true },
+          ];
+        }
       }
     }
 
@@ -145,9 +175,16 @@ export async function getFinanceRecordsAction(params: GetFinanceRecordsParams = 
       FinanceRecord.countDocuments(query),
     ]);
 
+    const finalRecords = targetShopForType
+      ? records.map((r: any) => ({
+          ...r,
+          type: resolveShopEffectiveType(r, targetShopForType!),
+        }))
+      : records;
+
     return {
       success: true,
-      records: JSON.parse(JSON.stringify(records)),
+      records: JSON.parse(JSON.stringify(finalRecords)),
       total,
       page,
       totalPages: Math.ceil(total / limit),

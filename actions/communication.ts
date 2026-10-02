@@ -19,6 +19,7 @@ import { isAdmin } from "@/lib/rbac";
 import { logAuditEvent } from "@/lib/audit";
 import mongoose from "mongoose";
 import { revalidatePath } from "next/cache";
+import { getRecordExactTimestamp } from "@/lib/balance";
 
 export async function getCommunicationItemsAction(shopId: string) {
   const session = await auth();
@@ -572,9 +573,10 @@ export async function getTelecomSalesAnalyticsAction(params: {
     const query: Record<string, unknown> = {
       isDeleted: { $ne: true },
       date: { $gte: start, $lte: end },
-      $or: [
-        { shop: shop._id, isCrossBranchPayment: { $ne: true } },
-        { beneficiaryShop: shop._id, isCrossBranchPayment: true },
+      shop: shop._id,
+      $nor: [
+        { isCrossBranchPayment: true, isCommunicationItem: { $ne: true }, beneficiaryShop: { $ne: shop._id } },
+        { isRelatedToBranch: true, isCommunicationItem: { $ne: true }, relatedBranch: { $ne: shop._id } },
       ],
     };
 
@@ -582,17 +584,20 @@ export async function getTelecomSalesAnalyticsAction(params: {
       query.itemCode = params.itemCodeFilter;
     }
 
-    const [records, registeredItems] = await Promise.all([
+    const [rawRecords, registeredItems] = await Promise.all([
       FinanceRecord.find(query)
         .populate("category", "name")
         .populate("relatedBranch", "name code")
         .populate("collectingShop", "name code")
         .populate("beneficiaryShop", "name code")
         .populate("createdBy", "name")
-        .sort({ date: -1, createdAt: -1 })
         .lean(),
       CommunicationItem.find({ shop: shop._id }).lean(),
     ]);
+
+    const records = (rawRecords as any[]).sort((a: any, b: any) => {
+      return getRecordExactTimestamp(b) - getRecordExactTimestamp(a);
+    });
 
     const registeredMap = new Map<string, any>();
     for (const it of registeredItems) {
