@@ -125,7 +125,7 @@ export async function getFinanceRecordsAction(params: GetFinanceRecordsParams = 
 
     if (params.search && params.search.trim().length > 0) {
       const cleanSearch = sanitizeInput(params.search.trim());
-      query.$or = [
+      const searchConditions = [
         { billNumber: { $regex: cleanSearch, $options: "i" } },
         { reason: { $regex: cleanSearch, $options: "i" } },
         { itemCode: { $regex: cleanSearch, $options: "i" } },
@@ -133,6 +133,15 @@ export async function getFinanceRecordsAction(params: GetFinanceRecordsParams = 
         { customerName: { $regex: cleanSearch, $options: "i" } },
         { customerPhone: { $regex: cleanSearch, $options: "i" } },
       ];
+      if (query.$or) {
+        query.$and = [
+          { $or: query.$or },
+          { $or: searchConditions },
+        ];
+        delete query.$or;
+      } else {
+        query.$or = searchConditions;
+      }
     }
 
     const page = Math.max(1, Number(params.page) || 1);
@@ -158,10 +167,17 @@ export async function getFinanceRecordsAction(params: GetFinanceRecordsParams = 
     ]);
 
     const finalRecords = targetShopForType
-      ? records.map((r: any) => ({
-          ...r,
-          type: resolveShopEffectiveType(r, targetShopForType!),
-        }))
+      ? records.map((r: any) => {
+          const bShopId = r.beneficiaryShop?._id?.toString() || r.beneficiaryShop?.toString();
+          const isBeneficiaryView = bShopId === targetShopForType;
+          return {
+            ...r,
+            type: resolveShopEffectiveType(r, targetShopForType!),
+            runningBalance: (isBeneficiaryView && r.beneficiaryRunningBalance != null)
+              ? r.beneficiaryRunningBalance
+              : r.runningBalance,
+          };
+        })
       : records;
 
     return {
@@ -364,6 +380,9 @@ export async function createFinanceRecordAction(formData: unknown) {
 
     // Recalculate shop sequential running balance
     await recalculateShopRunningBalance(shop._id, recordDate);
+    if (isCrossBranch && beneficiaryShopId) {
+      await recalculateShopRunningBalance(beneficiaryShopId, recordDate);
+    }
 
     await logAuditEvent({
       actorId: session.user.id,
@@ -594,6 +613,9 @@ export async function deleteFinanceRecordAction(recordId: string, overrideReason
     // Recalculate running balance after soft deletion
     if (shopId) {
       await recalculateShopRunningBalance(shopId, recordDate);
+    }
+    if (record.isCrossBranchPayment && record.beneficiaryShop) {
+      await recalculateShopRunningBalance(record.beneficiaryShop, recordDate);
     }
 
     // If approved and was Petty cash or Bank, reverse impact
@@ -831,8 +853,8 @@ export async function createCommunicationSaleBatchAction(payload: {
       : null;
     const relatedBranchNote = isBranchRelated ? (payload.relatedBranchNote || "").trim() : "";
 
-    const recordStatus: "PENDING" | "APPROVED" = isBranchRelated ? "PENDING" : "APPROVED";
-    const isLocked = !isBranchRelated;
+    const recordStatus: "PENDING" | "APPROVED" = "APPROVED";
+    const isLocked = true;
 
     // Handle Customer Credit Account if CREDIT sale
     let customerCreditDoc: any = null;
@@ -1048,9 +1070,10 @@ export async function createCommunicationSaleBatchAction(payload: {
       });
     }
 
-    // Recalculate shop sequential running balance only when auto-approved
-    if (recordStatus === "APPROVED") {
-      await recalculateShopRunningBalance(shop._id, now);
+    // Recalculate shop sequential running balance for communication shop and beneficiary branch
+    await recalculateShopRunningBalance(shop._id, now);
+    if (isBranchRelated && relatedBranchId) {
+      await recalculateShopRunningBalance(relatedBranchId, now);
     }
 
     await logAuditEvent({
@@ -1081,10 +1104,8 @@ export async function createCommunicationSaleBatchAction(payload: {
       billNumber,
       itemsCount: payload.items.length,
       grandTotal,
-      isAutoApproved: !isBranchRelated,
-      message: isBranchRelated
-        ? `Sale with ${payload.items.length} item(s) submitted for approval.`
-        : `Sale with ${payload.items.length} item(s) recorded successfully.`,
+      isAutoApproved: true,
+      message: `Sale with ${payload.items.length} item(s) recorded successfully.`,
     };
   } catch (error) {
     console.error("Batch sale recording error:", error);

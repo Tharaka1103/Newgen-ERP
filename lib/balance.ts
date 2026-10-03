@@ -60,14 +60,18 @@ export async function recalculateShopRunningBalance(
   const shopObjId = new mongoose.Types.ObjectId(shopId.toString());
 
   // Running balance represents physical cash movements at this specific shop.
-  // Every transaction created at this shop (including cross-branch cash collections) enters/leaves this shop's till.
+  // Every transaction created at this shop enters/leaves this shop's till.
+  // Cross-branch communication printing done FOR this shop also represents physical cash expense paid out of this shop's till.
   const query = {
-    shop: shopObjId,
+    $or: [
+      { shop: shopObjId },
+      { beneficiaryShop: shopObjId, isCrossBranchPayment: true, isCommunicationItem: true },
+    ],
     isDeleted: { $ne: true },
   };
 
   const rawRecords = await FinanceRecord.find(query)
-    .select("_id type status amount approvedAmount runningBalance paymentMethod isCrossBranchPayment beneficiaryShop shop isCommunicationItem date createdAt")
+    .select("_id type status amount approvedAmount runningBalance beneficiaryRunningBalance paymentMethod isCrossBranchPayment beneficiaryShop shop isCommunicationItem date createdAt")
     .lean();
 
   if (!rawRecords.length) return;
@@ -81,11 +85,18 @@ export async function recalculateShopRunningBalance(
   let currentBalance = 0;
 
   for (const record of records) {
+    const isBeneficiary = record.beneficiaryShop?.toString() === shopObjId.toString() &&
+      record.shop?.toString() !== shopObjId.toString();
+
     if (record.status === "REJECTED") {
       bulkOps.push({
         updateOne: {
           filter: { _id: record._id },
-          update: { $set: { runningBalance: currentBalance } },
+          update: {
+            $set: isBeneficiary
+              ? { beneficiaryRunningBalance: currentBalance }
+              : { runningBalance: currentBalance },
+          },
         },
       });
       continue;
@@ -97,7 +108,11 @@ export async function recalculateShopRunningBalance(
       bulkOps.push({
         updateOne: {
           filter: { _id: record._id },
-          update: { $set: { runningBalance: currentBalance } },
+          update: {
+            $set: isBeneficiary
+              ? { beneficiaryRunningBalance: currentBalance }
+              : { runningBalance: currentBalance },
+          },
         },
       });
       continue;
@@ -119,7 +134,11 @@ export async function recalculateShopRunningBalance(
     bulkOps.push({
       updateOne: {
         filter: { _id: record._id },
-        update: { $set: { runningBalance: currentBalance } },
+        update: {
+          $set: isBeneficiary
+            ? { beneficiaryRunningBalance: currentBalance }
+            : { runningBalance: currentBalance },
+        },
       },
     });
   }
@@ -255,11 +274,45 @@ export async function getShopCashBalance(
     },
   ]);
 
+  // 4. Cross-branch communication sales where this shop is the beneficiaryShop
+  // Physical cash was paid from this shop's drawer to the communication shop (-effectiveAmount)
+  const commExpenseAgg = await FinanceRecord.aggregate([
+    {
+      $match: {
+        beneficiaryShop: shopObjId,
+        shop: { $ne: shopObjId },
+        isCrossBranchPayment: true,
+        isCommunicationItem: true,
+        isDeleted: { $ne: true },
+        status: { $ne: "REJECTED" },
+        paymentMethod: { $ne: "CREDIT" },
+      },
+    },
+    {
+      $project: {
+        effectiveAmount: {
+          $cond: [
+            { $and: [{ $eq: ["$status", "APPROVED"] }, { $ne: ["$approvedAmount", null] }] },
+            "$approvedAmount",
+            "$amount",
+          ],
+        },
+      },
+    },
+    {
+      $group: {
+        _id: null,
+        balance: { $sum: "$effectiveAmount" },
+      },
+    },
+  ]);
+
   const standardBalance = standardCashAgg.length > 0 ? standardCashAgg[0].balance : 0;
   const collectingBalance = collectingCashAgg.length > 0 ? collectingCashAgg[0].balance : 0;
   const beneficiaryBalance = beneficiaryHandoverAgg.length > 0 ? beneficiaryHandoverAgg[0].balance : 0;
+  const commExpenseBalance = commExpenseAgg.length > 0 ? commExpenseAgg[0].balance : 0;
 
-  return standardBalance + collectingBalance + beneficiaryBalance;
+  return standardBalance + collectingBalance + beneficiaryBalance - commExpenseBalance;
 }
 
 /**

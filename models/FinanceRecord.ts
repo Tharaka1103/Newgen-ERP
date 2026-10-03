@@ -17,6 +17,7 @@ export interface IFinanceRecord extends Document {
   reviewedAt?: Date | null;
   reviewRemarks?: string | null;
   runningBalance: number;
+  beneficiaryRunningBalance?: number | null;
   isLocked: boolean;
 
   // Customer Credit & Debt Repayment Fields
@@ -156,6 +157,10 @@ const FinanceRecordSchema = new Schema<IFinanceRecord>(
     runningBalance: {
       type: Number,
       default: 0,
+    },
+    beneficiaryRunningBalance: {
+      type: Number,
+      default: null,
     },
     isLocked: {
       type: Boolean,

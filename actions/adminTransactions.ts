@@ -87,11 +87,20 @@ export async function getAllTransactionsAdminAction(params: AdminTransactionsFil
 
     if (params.search && params.search.trim().length > 0) {
       const cleanSearch = sanitizeInput(params.search.trim());
-      query.$or = [
+      const searchConditions = [
         { billNumber: { $regex: cleanSearch, $options: "i" } },
         { reason: { $regex: cleanSearch, $options: "i" } },
         { itemCode: { $regex: cleanSearch, $options: "i" } },
       ];
+      if (query.$or) {
+        query.$and = [
+          { $or: query.$or },
+          { $or: searchConditions },
+        ];
+        delete query.$or;
+      } else {
+        query.$or = searchConditions;
+      }
     }
 
     const page = Math.max(1, Number(params.page) || 1);
@@ -116,10 +125,17 @@ export async function getAllTransactionsAdminAction(params: AdminTransactionsFil
     ]);
 
     const records = (params.shopId && params.shopId !== "ALL")
-      ? rawRecords.map((r: any) => ({
-          ...r,
-          type: resolveShopEffectiveType(r, params.shopId!),
-        }))
+      ? rawRecords.map((r: any) => {
+          const bShopId = r.beneficiaryShop?._id?.toString() || r.beneficiaryShop?.toString();
+          const isBeneficiaryView = bShopId === params.shopId;
+          return {
+            ...r,
+            type: resolveShopEffectiveType(r, params.shopId!),
+            runningBalance: (isBeneficiaryView && r.beneficiaryRunningBalance != null)
+              ? r.beneficiaryRunningBalance
+              : r.runningBalance,
+          };
+        })
       : rawRecords.map((r: any) => ({
           ...r,
           type: r.isCommunicationItem ? "INCOME" : r.type,
@@ -393,6 +409,9 @@ export async function adminEditTransactionAction(formData: unknown) {
     if (record.shop && (!oldShopId || oldShopId.toString() !== record.shop.toString())) {
       await recalculateShopRunningBalance(record.shop, record.date);
     }
+    if (record.isCrossBranchPayment && record.beneficiaryShop) {
+      await recalculateShopRunningBalance(record.beneficiaryShop, oldDate < record.date ? oldDate : record.date);
+    }
 
     // Rebalance Petty cash if involved
     const newAmount = record.approvedAmount ?? record.amount;
@@ -499,6 +518,9 @@ export async function adminDeleteTransactionAction(formData: unknown) {
     // Recalculate shop running balance
     if (record.shop) {
       await recalculateShopRunningBalance(record.shop, record.date);
+    }
+    if (record.isCrossBranchPayment && record.beneficiaryShop) {
+      await recalculateShopRunningBalance(record.beneficiaryShop, record.date);
     }
 
     // Rebalance Petty cash if was approved
