@@ -19,7 +19,7 @@ import { isAdmin } from "@/lib/rbac";
 import { logAuditEvent } from "@/lib/audit";
 import mongoose from "mongoose";
 import { revalidatePath } from "next/cache";
-import { getRecordExactTimestamp } from "@/lib/balance";
+import { getRecordExactTimestamp, getShopPeriodCashFlow } from "@/lib/balance";
 
 export async function getCommunicationItemsAction(shopId: string) {
   const session = await auth();
@@ -460,10 +460,16 @@ export async function getItemWastageAnalyticsAction(params: {
         start.setHours(0, 0, 0, 0);
         break;
       case "custom":
-        start = params.startDate ? new Date(params.startDate) : new Date(now.getFullYear(), now.getMonth(), 1);
+        if (params.startDate) {
+          start = new Date(params.startDate);
+          if (!params.startDate.includes("T")) start.setHours(0, 0, 0, 0);
+        } else {
+          start = new Date(now.getFullYear(), now.getMonth(), 1);
+          start.setHours(0, 0, 0, 0);
+        }
         if (params.endDate) {
           end = new Date(params.endDate);
-          end.setHours(23, 59, 59, 999);
+          if (!params.endDate.includes("T")) end.setHours(23, 59, 59, 999);
         }
         break;
       case "month":
@@ -557,10 +563,16 @@ export async function getTelecomSalesAnalyticsAction(params: {
         start.setHours(0, 0, 0, 0);
         break;
       case "custom":
-        start = params.startDate ? new Date(params.startDate) : new Date(now.getFullYear(), now.getMonth(), 1);
+        if (params.startDate) {
+          start = new Date(params.startDate);
+          if (!params.startDate.includes("T")) start.setHours(0, 0, 0, 0);
+        } else {
+          start = new Date(now.getFullYear(), now.getMonth(), 1);
+          start.setHours(0, 0, 0, 0);
+        }
         if (params.endDate) {
           end = new Date(params.endDate);
-          end.setHours(23, 59, 59, 999);
+          if (!params.endDate.includes("T")) end.setHours(23, 59, 59, 999);
         }
         break;
       case "month":
@@ -736,6 +748,21 @@ export async function getTelecomSalesAnalyticsAction(params: {
     const netProfit = totalRevenue - totalCost;
     const itemBreakdown = Object.values(itemAggregationMap).sort((a, b) => b.revenue - a.revenue);
 
+    let periodCashInflow = 0;
+    let periodCashOutflow = 0;
+    let periodCashBalance = 0;
+    let periodClosingCashBalance = 0;
+
+    try {
+      const cashFlow = await getShopPeriodCashFlow(shop._id, start, end);
+      periodCashInflow = cashFlow.cashInflow;
+      periodCashOutflow = cashFlow.cashOutflow;
+      periodCashBalance = cashFlow.netCashFlow;
+      periodClosingCashBalance = cashFlow.closingCashBalance;
+    } catch (err) {
+      console.error("Error computing communication period cash flow:", err);
+    }
+
     return {
       success: true,
       totalRevenue,
@@ -747,6 +774,10 @@ export async function getTelecomSalesAnalyticsAction(params: {
       records: JSON.parse(JSON.stringify(records)),
       itemBreakdown,
       telecomBreakdown,
+      periodCashInflow,
+      periodCashOutflow,
+      periodCashBalance,
+      periodClosingCashBalance,
     };
   } catch (error) {
     console.error("Communication analytics error:", error);

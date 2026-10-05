@@ -7,7 +7,11 @@ import { Shop } from "@/models/Shop";
 import { Category } from "@/models/Category";
 import { User } from "@/models/User";
 import mongoose from "mongoose";
-import { getRecordExactTimestamp, resolveShopEffectiveType } from "@/lib/balance";
+import {
+  getRecordExactTimestamp,
+  resolveShopEffectiveType,
+  getShopPeriodCashFlow,
+} from "@/lib/balance";
 
 interface AnalyticsParams {
   period?: "today" | "week" | "month" | "year" | "custom";
@@ -49,10 +53,18 @@ export async function getSummaryAnalyticsAction(params: AnalyticsParams = {}) {
         start.setHours(0, 0, 0, 0);
         break;
       case "custom":
-        start = params.startDate ? new Date(params.startDate) : new Date(now.getFullYear(), now.getMonth(), 1);
+        if (params.startDate) {
+          start = new Date(params.startDate);
+          // If only a date was given (no time component), default to start of day
+          if (!params.startDate.includes("T")) start.setHours(0, 0, 0, 0);
+        } else {
+          start = new Date(now.getFullYear(), now.getMonth(), 1);
+          start.setHours(0, 0, 0, 0);
+        }
         if (params.endDate) {
           end = new Date(params.endDate);
-          end.setHours(23, 59, 59, 999);
+          // If only a date was given (no time component), default to end of day
+          if (!params.endDate.includes("T")) end.setHours(23, 59, 59, 999);
         }
         break;
       case "month":
@@ -231,6 +243,23 @@ export async function getSummaryAnalyticsAction(params: AnalyticsParams = {}) {
     }
     const categoryBreakdownData = Object.values(catMap).sort((a, b) => b.total - a.total);
 
+    let periodCashInflow = 0;
+    let periodCashOutflow = 0;
+    let periodCashBalance = 0;
+    let periodClosingCashBalance = 0;
+
+    if (targetShopIdStr) {
+      try {
+        const cashFlow = await getShopPeriodCashFlow(targetShopIdStr, start, end);
+        periodCashInflow = cashFlow.cashInflow;
+        periodCashOutflow = cashFlow.cashOutflow;
+        periodCashBalance = cashFlow.netCashFlow;
+        periodClosingCashBalance = cashFlow.closingCashBalance;
+      } catch (err) {
+        console.error("Error computing period cash flow:", err);
+      }
+    }
+
     return {
       success: true,
       kpis: {
@@ -241,6 +270,10 @@ export async function getSummaryAnalyticsAction(params: AnalyticsParams = {}) {
         approvedAmount,
         rejectedAmount,
         netBalance,
+        periodCashInflow,
+        periodCashOutflow,
+        periodCashBalance,
+        periodClosingCashBalance,
       },
       timelineData,
       shopComparisonData,

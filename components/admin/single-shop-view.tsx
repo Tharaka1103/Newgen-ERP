@@ -3,7 +3,11 @@
 import * as React from "react";
 import Link from "next/link";
 import { getSummaryAnalyticsAction } from "@/actions/reports";
-import { getShopDetailsAction } from "@/actions/shops";
+import {
+  getShopDetailsAction,
+  getShopCashAuditAction,
+  recalculateAndSyncShopCashAction,
+} from "@/actions/shops";
 import {
   getCommunicationItemsAction,
   createCommunicationItemAction,
@@ -102,6 +106,8 @@ import {
   CoinsIcon,
   BanknoteIcon,
   ArrowRightLeftIcon,
+  WrenchIcon,
+  AlertTriangleIcon,
 } from "lucide-react";
 import { toast } from "@/components/ui/toast";
 import { useForm } from "react-hook-form";
@@ -258,6 +264,10 @@ export function SingleShopView({
     records: any[];
     itemBreakdown: any[];
     telecomBreakdown?: any[];
+    periodCashInflow?: number;
+    periodCashOutflow?: number;
+    periodCashBalance?: number;
+    periodClosingCashBalance?: number;
   }>({
     totalRevenue: 0,
     totalCost: 0,
@@ -268,6 +278,10 @@ export function SingleShopView({
     records: [],
     itemBreakdown: [],
     telecomBreakdown: [],
+    periodCashInflow: 0,
+    periodCashOutflow: 0,
+    periodCashBalance: 0,
+    periodClosingCashBalance: 0,
   });
 
   // Utility Bill Payments Analytics State
@@ -692,6 +706,10 @@ export function SingleShopView({
       approvedAmount: number;
       rejectedAmount: number;
       netBalance: number;
+      periodCashInflow?: number;
+      periodCashOutflow?: number;
+      periodCashBalance?: number;
+      periodClosingCashBalance?: number;
     };
     timelineData: Array<{ date: string; income: number; expense: number }>;
     categoryBreakdownData: Array<{ category: string; colorToken: string; total: number; type: string }>;
@@ -705,11 +723,74 @@ export function SingleShopView({
       approvedAmount: 0,
       rejectedAmount: 0,
       netBalance: 0,
+      periodCashInflow: 0,
+      periodCashOutflow: 0,
+      periodCashBalance: 0,
+      periodClosingCashBalance: 0,
     },
     timelineData: [],
     categoryBreakdownData: [],
     records: [],
   });
+
+  // Cash Drawer Audit & Diagnostic State
+  const [auditOpen, setAuditOpen] = React.useState(false);
+  const [auditLoading, setAuditLoading] = React.useState(false);
+  const [syncingCash, setSyncingCash] = React.useState(false);
+  const [cashAuditData, setCashAuditData] = React.useState<any | null>(null);
+
+  const handleOpenAudit = async () => {
+    setAuditOpen(true);
+    setAuditLoading(true);
+    try {
+      const res = await getShopCashAuditAction(shop._id);
+      if (res.success && res.audit) {
+        setCashAuditData(res.audit);
+      } else {
+        toast.create({
+          title: "Audit Error",
+          description: res.error || "Failed to load cash audit.",
+          type: "error",
+        });
+      }
+    } catch (err) {
+      console.error("Cash audit error:", err);
+    } finally {
+      setAuditLoading(false);
+    }
+  };
+
+  const handleRecalculateAndSync = async () => {
+    setSyncingCash(true);
+    try {
+      const res = await recalculateAndSyncShopCashAction(shop._id);
+      if (res.success) {
+        toast.create({
+          title: "Cash Drawer Synced",
+          description: res.message || "Running balance synced successfully.",
+          type: "success",
+        });
+        if (res.audit) {
+          setCashAuditData(res.audit);
+          setStats((prev) => ({
+            ...prev,
+            currentBalance: res.audit.currentDrawerBalance,
+          }));
+        }
+        fetchShopData();
+      } else {
+        toast.create({
+          title: "Sync Failed",
+          description: res.error || "Failed to recalculate cash.",
+          type: "error",
+        });
+      }
+    } catch {
+      toast.create({ title: "Error", description: "Unexpected error while syncing.", type: "error" });
+    } finally {
+      setSyncingCash(false);
+    }
+  };
 
   const fetchShopData = React.useCallback(async () => {
     setLoading(true);
@@ -782,6 +863,10 @@ export function SingleShopView({
             records: commAnalyticsRes.records || [],
             itemBreakdown: commAnalyticsRes.itemBreakdown || [],
             telecomBreakdown: (commAnalyticsRes as any).telecomBreakdown || [],
+            periodCashInflow: commAnalyticsRes.periodCashInflow || 0,
+            periodCashOutflow: commAnalyticsRes.periodCashOutflow || 0,
+            periodCashBalance: commAnalyticsRes.periodCashBalance || 0,
+            periodClosingCashBalance: commAnalyticsRes.periodClosingCashBalance || 0,
           });
         }
         if (creditRes.success && creditRes.customers) {
@@ -2240,9 +2325,20 @@ export function SingleShopView({
                     LKR {Number(stats.currentBalance || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                   </div>
                 </div>
-                <Badge variant="outline" className="font-mono text-[10px] bg-background/50 border-emerald-500/30 text-emerald-600 dark:text-emerald-400">
-                  Cash In Hand
-                </Badge>
+                <div className="flex flex-col items-end gap-2">
+                  <Badge variant="outline" className="font-mono text-[10px] bg-background/50 border-emerald-500/30 text-emerald-600 dark:text-emerald-400">
+                    Cash In Locker
+                  </Badge>
+                  <Button
+                    variant="outline"
+                    size="xs"
+                    onClick={handleOpenAudit}
+                    className="text-xs h-7 px-2.5 gap-1.5 border-emerald-500/30 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 font-medium shadow-xs"
+                  >
+                    <WrenchIcon className="size-3" />
+                    <span>Audit / Debug Cash</span>
+                  </Button>
+                </div>
               </div>
             </Card>
 
@@ -2449,20 +2545,26 @@ export function SingleShopView({
               )}
 
               {period === "custom" && (
-                <div className="flex items-center gap-2">
-                  <Input
-                    type="date"
-                    value={startDate}
-                    onChange={(e) => setStartDate(e.target.value)}
-                    className="h-9 w-36 text-xs"
-                  />
-                  <span className="text-xs text-muted-foreground">to</span>
-                  <Input
-                    type="date"
-                    value={endDate}
-                    onChange={(e) => setEndDate(e.target.value)}
-                    className="h-9 w-36 text-xs"
-                  />
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="flex flex-col gap-0.5">
+                    <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider pl-0.5">From</label>
+                    <Input
+                      type="datetime-local"
+                      value={startDate}
+                      onChange={(e) => setStartDate(e.target.value)}
+                      className="h-9 w-48 text-xs"
+                    />
+                  </div>
+                  <span className="text-xs text-muted-foreground mt-4">→</span>
+                  <div className="flex flex-col gap-0.5">
+                    <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider pl-0.5">To</label>
+                    <Input
+                      type="datetime-local"
+                      value={endDate}
+                      onChange={(e) => setEndDate(e.target.value)}
+                      className="h-9 w-48 text-xs"
+                    />
+                  </div>
                 </div>
               )}
             </div>
@@ -2492,7 +2594,7 @@ export function SingleShopView({
 
           {/* KPI Cards (Communication vs Standard) */}
           {isCommunication ? (
-            <div className="grid gap-3 grid-cols-2 sm:grid-cols-3 lg:grid-cols-6">
+            <div className="grid gap-3 grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7">
               <Card className="border-border bg-card p-3.5 shadow-sm">
                 <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
                   Total Sales Revenue
@@ -2521,6 +2623,24 @@ export function SingleShopView({
                   LKR {commAnalytics.netProfit.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                 </div>
                 <div className="text-[10px] text-muted-foreground mt-0.5">Revenue minus actual cost</div>
+              </Card>
+
+              <Card className="border-emerald-500/30 bg-gradient-to-br from-card to-emerald-500/10 p-3.5 shadow-sm">
+                <div className="flex items-center justify-between">
+                  <div className="text-[11px] font-bold text-emerald-700 dark:text-emerald-400 uppercase tracking-wider flex items-center gap-1">
+                    <WalletIcon className="size-3.5" />
+                    <span>Period Cash Flow</span>
+                  </div>
+                  <Badge variant="outline" className="text-[9px] px-1.5 py-0 border-emerald-500/30 text-emerald-600 dark:text-emerald-400 font-mono">
+                    Till Net
+                  </Badge>
+                </div>
+                <div className={`text-xl font-bold font-mono mt-1 ${Number(commAnalytics.periodCashBalance || 0) >= 0 ? "text-chart-2" : "text-destructive"}`}>
+                  LKR {Number(commAnalytics.periodCashBalance || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                </div>
+                <div className="text-[10px] text-muted-foreground mt-0.5 truncate">
+                  In: {Number(commAnalytics.periodCashInflow || 0).toLocaleString()} · Out: {Number(commAnalytics.periodCashOutflow || 0).toLocaleString()}
+                </div>
               </Card>
 
               <Card className="border-border bg-card p-3.5 shadow-sm">
@@ -2552,9 +2672,27 @@ export function SingleShopView({
                 </div>
                 <div className="text-[10px] text-muted-foreground mt-0.5">Cross-campus verification</div>
               </Card>
+
+              <Card className="border-cyan-500/30 bg-gradient-to-br from-card to-cyan-500/10 p-3.5 shadow-sm col-span-2 sm:col-span-1">
+                <div className="flex items-center justify-between">
+                  <div className="text-[11px] font-bold text-cyan-700 dark:text-cyan-400 uppercase tracking-wider flex items-center gap-1">
+                    <CoinsIcon className="size-3.5" />
+                    <span>Closing Cash Balance</span>
+                  </div>
+                  <Badge variant="outline" className="text-[9px] px-1.5 py-0 border-cyan-500/30 text-cyan-600 dark:text-cyan-400 font-mono">
+                    Period End
+                  </Badge>
+                </div>
+                <div className={`text-xl font-bold font-mono mt-1 ${Number(commAnalytics.periodClosingCashBalance || 0) >= 0 ? "text-cyan-600 dark:text-cyan-400" : "text-destructive"}`}>
+                  LKR {Number(commAnalytics.periodClosingCashBalance || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                </div>
+                <div className="text-[10px] text-muted-foreground mt-0.5 truncate">
+                  Cash in drawer at end of period
+                </div>
+              </Card>
             </div>
           ) : (
-            <div className="grid gap-3 grid-cols-2 sm:grid-cols-4 lg:grid-cols-4">
+            <div className="grid gap-3 grid-cols-2 sm:grid-cols-3 lg:grid-cols-5">
               <Card className="border-border bg-card p-3.5 shadow-sm">
                 <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
                   Period Total Inflow
@@ -2573,6 +2711,42 @@ export function SingleShopView({
                   LKR {analytics.kpis.totalExpense.toLocaleString()}
                 </div>
                 <div className="text-[10px] text-muted-foreground mt-0.5">Operational expenses</div>
+              </Card>
+
+              <Card className="border-emerald-500/30 bg-gradient-to-br from-card to-emerald-500/10 p-3.5 shadow-sm">
+                <div className="flex items-center justify-between">
+                  <div className="text-[11px] font-bold text-emerald-700 dark:text-emerald-400 uppercase tracking-wider flex items-center gap-1">
+                    <WalletIcon className="size-3.5" />
+                    <span>Period Cash Flow</span>
+                  </div>
+                  <Badge variant="outline" className="text-[9px] px-1.5 py-0 border-emerald-500/30 text-emerald-600 dark:text-emerald-400 font-mono">
+                    Till Net
+                  </Badge>
+                </div>
+                <div className={`text-xl font-bold font-mono mt-1 ${Number(analytics.kpis.periodCashBalance || 0) >= 0 ? "text-chart-2" : "text-destructive"}`}>
+                  LKR {Number(analytics.kpis.periodCashBalance || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                </div>
+                <div className="text-[10px] text-muted-foreground mt-0.5 truncate">
+                  In: {Number(analytics.kpis.periodCashInflow || 0).toLocaleString()} · Out: {Number(analytics.kpis.periodCashOutflow || 0).toLocaleString()}
+                </div>
+              </Card>
+
+              <Card className="border-cyan-500/30 bg-gradient-to-br from-card to-cyan-500/10 p-3.5 shadow-sm">
+                <div className="flex items-center justify-between">
+                  <div className="text-[11px] font-bold text-cyan-700 dark:text-cyan-400 uppercase tracking-wider flex items-center gap-1">
+                    <CoinsIcon className="size-3.5" />
+                    <span>Closing Cash Balance</span>
+                  </div>
+                  <Badge variant="outline" className="text-[9px] px-1.5 py-0 border-cyan-500/30 text-cyan-600 dark:text-cyan-400 font-mono">
+                    Period End
+                  </Badge>
+                </div>
+                <div className={`text-xl font-bold font-mono mt-1 ${Number(analytics.kpis.periodClosingCashBalance || 0) >= 0 ? "text-cyan-600 dark:text-cyan-400" : "text-destructive"}`}>
+                  LKR {Number(analytics.kpis.periodClosingCashBalance || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                </div>
+                <div className="text-[10px] text-muted-foreground mt-0.5">
+                  Cash in drawer at end of period
+                </div>
               </Card>
 
               <Card className="border-border bg-card p-3.5 shadow-sm">
@@ -5196,6 +5370,263 @@ export function SingleShopView({
               </Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Cash Drawer Audit & Diagnostic Dialog */}
+      <Dialog open={auditOpen} onOpenChange={setAuditOpen}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <div className="flex items-center gap-2.5">
+              <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+                <WrenchIcon className="size-5" />
+              </div>
+              <div>
+                <DialogTitle className="text-lg font-bold">
+                  Cash Drawer Diagnostic & Balance Audit
+                </DialogTitle>
+                <DialogDescription className="text-xs">
+                  Inspect physical locker cash calculations, detect discrepancies, and view non-cash funds for {shop.name} ({shop.code}).
+                </DialogDescription>
+              </div>
+            </div>
+          </DialogHeader>
+
+          {auditLoading ? (
+            <div className="py-12 flex flex-col items-center justify-center gap-3 text-muted-foreground">
+              <Loader2Icon className="size-8 animate-spin text-primary" />
+              <p className="text-xs">Analyzing ledger transactions & drawer state...</p>
+            </div>
+          ) : cashAuditData ? (
+            <div className="space-y-5 py-2">
+              {/* Top Banner: Status & Sync Check */}
+              <div className={`p-4 rounded-xl border flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 ${
+                cashAuditData.isOutOfSync
+                  ? "bg-amber-500/10 border-amber-500/30 text-amber-900 dark:text-amber-300"
+                  : "bg-emerald-500/10 border-emerald-500/30 text-emerald-900 dark:text-emerald-300"
+              }`}>
+                <div className="flex items-start gap-3">
+                  {cashAuditData.isOutOfSync ? (
+                    <AlertTriangleIcon className="size-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                  ) : (
+                    <CheckCircle2Icon className="size-5 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
+                  )}
+                  <div>
+                    <h5 className="font-semibold text-sm">
+                      {cashAuditData.isOutOfSync ? "Drawer Balance Out of Sync" : "Drawer Balance Fully Synchronized"}
+                    </h5>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      {cashAuditData.isOutOfSync
+                        ? `Live physical cash (LKR ${cashAuditData.currentDrawerBalance.toLocaleString()}) differs from the latest recorded running balance (LKR ${Number(cashAuditData.latestStoredRunningBalance || 0).toLocaleString()}) by LKR ${Math.abs(cashAuditData.discrepancyAmount).toLocaleString()}. Click Re-sync to align all records.`
+                        : `The recorded ledger running balance matches the true calculated physical drawer cash of LKR ${cashAuditData.currentDrawerBalance.toLocaleString()}.`}
+                    </p>
+                  </div>
+                </div>
+
+                <Button
+                  size="sm"
+                  onClick={handleRecalculateAndSync}
+                  disabled={syncingCash}
+                  className="shrink-0 gap-1.5 text-xs bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm"
+                >
+                  <RefreshCwIcon className={`size-3.5 ${syncingCash ? "animate-spin" : ""}`} />
+                  {syncingCash ? "Recalculating..." : "Recalculate & Re-sync"}
+                </Button>
+              </div>
+
+              {/* 3 Overview Cards */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <Card className="p-3.5 bg-card border-border">
+                  <span className="text-[11px] text-muted-foreground font-medium uppercase tracking-wider">
+                    Calculated Drawer Cash
+                  </span>
+                  <div className="text-xl font-bold font-mono text-emerald-600 dark:text-emerald-400 mt-1">
+                    LKR {cashAuditData.currentDrawerBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  </div>
+                  <span className="text-[10px] text-muted-foreground mt-0.5 block">
+                    Actual physical notes & coins that must be in the locker
+                  </span>
+                </Card>
+
+                <Card className="p-3.5 bg-card border-border">
+                  <span className="text-[11px] text-muted-foreground font-medium uppercase tracking-wider">
+                    Unsettled Cash Held for Others
+                  </span>
+                  <div className="text-xl font-bold font-mono text-blue-600 dark:text-blue-400 mt-1">
+                    LKR {cashAuditData.components.unsettledCollectingCashHeld.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  </div>
+                  <span className="text-[10px] text-muted-foreground mt-0.5 block">
+                    Tuition fees / payments collected at this counter for other branches
+                  </span>
+                </Card>
+
+                <Card className="p-3.5 bg-card border-border">
+                  <span className="text-[11px] text-muted-foreground font-medium uppercase tracking-wider">
+                    Direct Shop Net Cash
+                  </span>
+                  <div className={`text-xl font-bold font-mono mt-1 ${cashAuditData.components.standardNetCash >= 0 ? "text-chart-2" : "text-destructive"}`}>
+                    LKR {cashAuditData.components.standardNetCash.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  </div>
+                  <span className="text-[10px] text-muted-foreground mt-0.5 block">
+                    Direct branch cash inflow minus cash outflow
+                  </span>
+                </Card>
+              </div>
+
+              {/* Payment Methods Audit (Explaining why Petty Cash / Bank / Credit are NOT in Drawer) */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <h6 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                    Funds Breakdown by Payment Method
+                  </h6>
+                  <span className="text-[11px] text-muted-foreground">
+                    Only "Physical Cash" moves the locker drawer
+                  </span>
+                </div>
+
+                <div className="rounded-lg border border-border overflow-hidden">
+                  <table className="w-full text-xs">
+                    <thead className="bg-muted/60 text-muted-foreground">
+                      <tr>
+                        <th className="py-2 px-3 text-left font-semibold">Payment Method</th>
+                        <th className="py-2 px-3 text-right font-semibold">Inflow (LKR)</th>
+                        <th className="py-2 px-3 text-right font-semibold">Outflow (LKR)</th>
+                        <th className="py-2 px-3 text-right font-semibold">Net (LKR)</th>
+                        <th className="py-2 px-3 text-center font-semibold">Affects Locker?</th>
+                        <th className="py-2 px-3 text-left font-semibold">Account / Fund Location</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border">
+                      {cashAuditData.paymentMethods.map((pm: any) => (
+                        <tr key={pm.method} className={pm.impactsLockerCash ? "bg-emerald-500/5 font-medium" : ""}>
+                          <td className="py-2.5 px-3">
+                            <span className="font-semibold">{pm.label}</span>
+                            <span className="text-[10px] text-muted-foreground block font-mono">{pm.method}</span>
+                          </td>
+                          <td className="py-2.5 px-3 text-right font-mono text-emerald-600 dark:text-emerald-400">
+                            +{pm.inflow.toLocaleString()}
+                          </td>
+                          <td className="py-2.5 px-3 text-right font-mono text-muted-foreground">
+                            -{pm.outflow.toLocaleString()}
+                          </td>
+                          <td className={`py-2.5 px-3 text-right font-mono font-bold ${pm.net >= 0 ? "text-chart-2" : "text-destructive"}`}>
+                            {pm.net >= 0 ? "+" : ""}{pm.net.toLocaleString()}
+                          </td>
+                          <td className="py-2.5 px-3 text-center">
+                            {pm.impactsLockerCash ? (
+                              <Badge className="bg-emerald-600 text-white text-[10px] px-2 py-0">
+                                YES (Locker)
+                              </Badge>
+                            ) : (
+                              <Badge variant="outline" className="text-[10px] px-2 py-0 text-muted-foreground">
+                                NO (Separate)
+                              </Badge>
+                            )}
+                          </td>
+                          <td className="py-2.5 px-3 text-[11px] text-muted-foreground max-w-xs">
+                            {pm.explanation}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Pending Cash Collections Notice */}
+              {cashAuditData.pendingCashCollections && cashAuditData.pendingCashCollections.length > 0 && (
+                <div className="space-y-2">
+                  <div className="flex items-center gap-1.5">
+                    <AlertTriangleIcon className="size-4 text-amber-500" />
+                    <h6 className="text-xs font-bold uppercase tracking-wider text-amber-700 dark:text-amber-400">
+                      Pending Cash Collections Physically In Locker ({cashAuditData.pendingCashCollections.length})
+                    </h6>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">
+                    The following payments were received in cash at the counter and are physically in your locker right now, awaiting admin verification:
+                  </p>
+
+                  <div className="rounded-lg border border-border overflow-hidden">
+                    <table className="w-full text-xs">
+                      <thead className="bg-muted/60 text-muted-foreground">
+                        <tr>
+                          <th className="py-2 px-3 text-left font-semibold">Bill No</th>
+                          <th className="py-2 px-3 text-left font-semibold">Date</th>
+                          <th className="py-2 px-3 text-left font-semibold">Reason</th>
+                          <th className="py-2 px-3 text-left font-semibold">Target Branch</th>
+                          <th className="py-2 px-3 text-right font-semibold">Amount (LKR)</th>
+                          <th className="py-2 px-3 text-center font-semibold">Status</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-border">
+                        {cashAuditData.pendingCashCollections.map((pr: any) => (
+                          <tr key={pr.recordId}>
+                            <td className="py-2 px-3 font-mono font-semibold">{pr.billNumber}</td>
+                            <td className="py-2 px-3 font-mono text-[11px]">{pr.date}</td>
+                            <td className="py-2 px-3">{pr.reason}</td>
+                            <td className="py-2 px-3">
+                              <Badge variant="outline" className="text-[10px]">{pr.beneficiaryName}</Badge>
+                            </td>
+                            <td className="py-2 px-3 text-right font-mono font-bold text-chart-2">
+                              +LKR {pr.amount.toLocaleString()}
+                            </td>
+                            <td className="py-2 px-3 text-center">
+                              <Badge variant="secondary" className="bg-amber-500/10 text-amber-700 dark:text-amber-400 text-[10px]">
+                                {pr.status}
+                              </Badge>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {/* Recent Cash Ledger Entries */}
+              {cashAuditData.recentCashRecords && cashAuditData.recentCashRecords.length > 0 && (
+                <div className="space-y-2">
+                  <h6 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                    Recent Physical Cash Movements (Latest 10)
+                  </h6>
+                  <div className="rounded-lg border border-border overflow-hidden">
+                    <table className="w-full text-xs">
+                      <thead className="bg-muted/60 text-muted-foreground">
+                        <tr>
+                          <th className="py-2 px-3 text-left font-semibold">Date</th>
+                          <th className="py-2 px-3 text-left font-semibold">Bill No</th>
+                          <th className="py-2 px-3 text-left font-semibold">Reason</th>
+                          <th className="py-2 px-3 text-right font-semibold">Amount (LKR)</th>
+                          <th className="py-2 px-3 text-right font-semibold">Running Balance (LKR)</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-border">
+                        {cashAuditData.recentCashRecords.map((rec: any) => (
+                          <tr key={rec.recordId}>
+                            <td className="py-2 px-3 font-mono text-[11px]">{rec.date}</td>
+                            <td className="py-2 px-3 font-mono">{rec.billNumber}</td>
+                            <td className="py-2 px-3">{rec.reason}</td>
+                            <td className={`py-2 px-3 text-right font-mono font-semibold ${rec.type === "INCOME" ? "text-chart-2" : "text-foreground"}`}>
+                              {rec.type === "INCOME" ? "+" : "-"}LKR {Number(rec.amount).toLocaleString()}
+                            </td>
+                            <td className="py-2 px-3 text-right font-mono font-bold text-foreground">
+                              LKR {Number(rec.runningBalance).toLocaleString()}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : null}
+
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => setAuditOpen(false)} className="text-xs">
+              Close
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

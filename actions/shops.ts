@@ -10,7 +10,13 @@ import { sanitizeInput } from "@/lib/sanitize";
 import { createShopSchema, updateShopSchema } from "@/schemas/shop";
 import { isAdmin } from "@/lib/rbac";
 import { logAuditEvent } from "@/lib/audit";
-import { getShopCashBalance, getShopInterBranchDues } from "@/lib/balance";
+import {
+  getShopCashBalance,
+  getShopInterBranchDues,
+  getShopCashAuditData,
+  recalculateShopRunningBalance,
+} from "@/lib/balance";
+import { revalidatePath } from "next/cache";
 import mongoose from "mongoose";
 
 export async function getShopsAction() {
@@ -269,5 +275,60 @@ export async function toggleShopActiveAction(shopId: string) {
   } catch (error) {
     console.error("Toggle shop error:", error);
     return { success: false, error: "Failed to toggle shop status." };
+  }
+}
+
+export async function getShopCashAuditAction(shopId: string) {
+  const session = await auth();
+  if (!session?.user?.id) {
+    return { success: false, error: "Unauthorized. Please log in." };
+  }
+
+  try {
+    await connectDB();
+    const audit = await getShopCashAuditData(shopId);
+    return { success: true, audit: JSON.parse(JSON.stringify(audit)) };
+  } catch (error) {
+    console.error("Get shop cash audit error:", error);
+    return { success: false, error: "Failed to retrieve cash diagnostic audit data." };
+  }
+}
+
+export async function recalculateAndSyncShopCashAction(shopId: string) {
+  const session = await auth();
+  if (!session?.user?.id || !isAdmin((session.user as { role?: string }).role)) {
+    return { success: false, error: "Unauthorized. Admin privileges required." };
+  }
+
+  try {
+    await connectDB();
+    await recalculateShopRunningBalance(shopId);
+
+    const audit = await getShopCashAuditData(shopId);
+
+    await logAuditEvent({
+      actorId: session.user.id,
+      action: "RECALCULATE_AND_SYNC_SHOP_CASH",
+      targetType: "Shop",
+      targetId: new mongoose.Types.ObjectId(shopId),
+      metadata: {
+        shopName: audit.shopName,
+        shopCode: audit.shopCode,
+        currentDrawerBalance: audit.currentDrawerBalance,
+      },
+    });
+
+    revalidatePath(`/dashboard/admin/shops/${shopId}`);
+    revalidatePath("/dashboard/admin/shops");
+    revalidatePath("/dashboard/staff/finances");
+
+    return {
+      success: true,
+      message: `Drawer running balance successfully recalculated and synced for ${audit.shopName}.`,
+      audit: JSON.parse(JSON.stringify(audit)),
+    };
+  } catch (error) {
+    console.error("Recalculate and sync shop cash error:", error);
+    return { success: false, error: "Failed to recalculate and sync shop cash." };
   }
 }
