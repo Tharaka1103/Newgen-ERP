@@ -125,8 +125,24 @@ export async function recalculateShopRunningBalance(
         ? record.approvedAmount
         : record.amount;
 
+    // Cross-branch communication items (printing/services done by Communication for other branches):
+    // These are internal service charges between branches, NOT physical cash drawer movements.
+    if (record.isCrossBranchPayment && record.isCommunicationItem) {
+      bulkOps.push({
+        updateOne: {
+          filter: { _id: record._id },
+          update: {
+            $set: isBeneficiary
+              ? { beneficiaryRunningBalance: currentBalance }
+              : { runningBalance: currentBalance },
+          },
+        },
+      });
+      continue;
+    }
+
     // Cross-branch payment handling:
-    if (record.isCrossBranchPayment && !record.isCommunicationItem) {
+    if (record.isCrossBranchPayment) {
       const isCollecting =
         record.collectingShop?.toString() === shopObjId.toString() ||
         (record.shop?.toString() === shopObjId.toString() &&
@@ -204,15 +220,12 @@ export async function getShopCashBalance(
   const shopObjId = new mongoose.Types.ObjectId(shopId.toString());
   const dateFilter = asOfDate ? { date: { $lte: asOfDate } } : {};
 
-  // 1. Standard non-cross-branch cash transactions at this shop + Communication retail sales performed at this shop
+  // 1. Standard non-cross-branch cash transactions at this shop (including POS retail sales performed at this shop)
   const standardCashAgg = await FinanceRecord.aggregate([
     {
       $match: {
         shop: shopObjId,
-        $or: [
-          { isCrossBranchPayment: { $ne: true } },
-          { isCommunicationItem: true },
-        ],
+        isCrossBranchPayment: { $ne: true },
         isDeleted: { $ne: true },
         status: { $ne: "REJECTED" },
         paymentMethod: { $in: ["CASH", null] },
@@ -322,46 +335,11 @@ export async function getShopCashBalance(
     },
   ]);
 
-  // 4. Cross-branch communication sales where this shop is the beneficiaryShop
-  // Physical cash was paid from this shop's drawer to the communication shop (-effectiveAmount)
-  const commExpenseAgg = await FinanceRecord.aggregate([
-    {
-      $match: {
-        beneficiaryShop: shopObjId,
-        shop: { $ne: shopObjId },
-        isCrossBranchPayment: true,
-        isCommunicationItem: true,
-        isDeleted: { $ne: true },
-        status: { $ne: "REJECTED" },
-        paymentMethod: { $in: ["CASH", null] },
-        ...dateFilter,
-      },
-    },
-    {
-      $project: {
-        effectiveAmount: {
-          $cond: [
-            { $and: [{ $eq: ["$status", "APPROVED"] }, { $ne: ["$approvedAmount", null] }] },
-            "$approvedAmount",
-            "$amount",
-          ],
-        },
-      },
-    },
-    {
-      $group: {
-        _id: null,
-        balance: { $sum: "$effectiveAmount" },
-      },
-    },
-  ]);
-
   const standardBalance = standardCashAgg.length > 0 ? standardCashAgg[0].balance : 0;
   const collectingBalance = collectingCashAgg.length > 0 ? collectingCashAgg[0].balance : 0;
   const beneficiaryBalance = beneficiaryHandoverAgg.length > 0 ? beneficiaryHandoverAgg[0].balance : 0;
-  const commExpenseBalance = commExpenseAgg.length > 0 ? commExpenseAgg[0].balance : 0;
 
-  return standardBalance + collectingBalance + beneficiaryBalance - commExpenseBalance;
+  return standardBalance + collectingBalance + beneficiaryBalance;
 }
 
 /**
@@ -391,10 +369,7 @@ export async function getShopPeriodCashFlow(
     {
       $match: {
         shop: shopObjId,
-        $or: [
-          { isCrossBranchPayment: { $ne: true } },
-          { isCommunicationItem: true },
-        ],
+        isCrossBranchPayment: { $ne: true },
         isDeleted: { $ne: true },
         status: { $ne: "REJECTED" },
         paymentMethod: { $in: ["CASH", null] },
@@ -492,40 +467,7 @@ export async function getShopPeriodCashFlow(
     },
   ]);
 
-  // 4. Comm expenses paid out in cash in period
-  const commAgg = await FinanceRecord.aggregate([
-    {
-      $match: {
-        beneficiaryShop: shopObjId,
-        shop: { $ne: shopObjId },
-        isCrossBranchPayment: true,
-        isCommunicationItem: true,
-        isDeleted: { $ne: true },
-        status: { $ne: "REJECTED" },
-        paymentMethod: { $in: ["CASH", null] },
-        ...periodMatch,
-      },
-    },
-    {
-      $project: {
-        effectiveAmount: {
-          $cond: [
-            { $and: [{ $eq: ["$status", "APPROVED"] }, { $ne: ["$approvedAmount", null] }] },
-            "$approvedAmount",
-            "$amount",
-          ],
-        },
-      },
-    },
-    {
-      $group: {
-        _id: null,
-        outflow: { $sum: "$effectiveAmount" },
-      },
-    },
-  ]);
-
-  // 5. Cross-branch cash settled/disbursed out of this shop in period (handed over or banked)
+  // 4. Cross-branch cash settled/disbursed out of this shop in period (handed over or banked)
   const settledOutAgg = await FinanceRecord.aggregate([
     {
       $match: {
@@ -560,11 +502,10 @@ export async function getShopPeriodCashFlow(
   const stdOutflow = stdAgg[0]?.outflow || 0;
   const colInflow = colAgg[0]?.inflow || 0;
   const benInflow = benAgg[0]?.inflow || 0;
-  const commOutflow = commAgg[0]?.outflow || 0;
   const settledOutflow = settledOutAgg[0]?.outflow || 0;
 
   const cashInflow = stdInflow + colInflow + benInflow;
-  const cashOutflow = stdOutflow + commOutflow + settledOutflow;
+  const cashOutflow = stdOutflow + settledOutflow;
   const netCashFlow = cashInflow - cashOutflow;
 
   const closingCashBalance = await getShopCashBalance(shopObjId, endDate);
@@ -618,6 +559,7 @@ export async function getShopInterBranchDues(
         ],
         beneficiaryShop: { $ne: null },
         isCrossBranchPayment: true,
+        isCommunicationItem: { $ne: true },
         type: "INCOME",
         interBranchSettlementStatus: "UNSETTLED",
         status: { $ne: "REJECTED" },
@@ -673,6 +615,7 @@ export async function getShopInterBranchDues(
           { shop: { $ne: shopObjId }, isCrossBranchPayment: true },
         ],
         isCrossBranchPayment: true,
+        isCommunicationItem: { $ne: true },
         type: "INCOME",
         interBranchSettlementStatus: "UNSETTLED",
         status: { $ne: "REJECTED" },
@@ -796,7 +739,7 @@ export async function getShopCashAuditData(
   const currentDrawerBalance = await getShopCashBalance(shopObjId);
 
   // 2. Latest stored running balance on the most recent record
-  const latestRec = await FinanceRecord.findOne({
+  const candidateLatestRecs = await FinanceRecord.find({
     $or: [
       { shop: shopObjId },
       { beneficiaryShop: shopObjId, isCrossBranchPayment: true },
@@ -804,8 +747,14 @@ export async function getShopCashAuditData(
     isDeleted: { $ne: true },
   })
     .sort({ date: -1, createdAt: -1 })
-    .select("runningBalance beneficiaryRunningBalance beneficiaryShop shop")
+    .limit(20)
+    .select("runningBalance beneficiaryRunningBalance beneficiaryShop shop date createdAt")
     .lean();
+
+  const sortedCandidates = candidateLatestRecs.sort(
+    (a, b) => getRecordExactTimestamp(b) - getRecordExactTimestamp(a)
+  );
+  const latestRec = sortedCandidates[0] || null;
 
   let latestStoredRunningBalance: number | null = null;
   if (latestRec) {
@@ -831,10 +780,7 @@ export async function getShopCashAuditData(
     {
       $match: {
         shop: shopObjId,
-        $or: [
-          { isCrossBranchPayment: { $ne: true } },
-          { isCommunicationItem: true },
-        ],
+        isCrossBranchPayment: { $ne: true },
         isDeleted: { $ne: true },
         status: { $ne: "REJECTED" },
         paymentMethod: { $in: ["CASH", null] },
@@ -915,40 +861,12 @@ export async function getShopCashAuditData(
     },
   ]);
 
-  const commExpAgg = await FinanceRecord.aggregate([
-    {
-      $match: {
-        beneficiaryShop: shopObjId,
-        shop: { $ne: shopObjId },
-        isCrossBranchPayment: true,
-        isCommunicationItem: true,
-        isDeleted: { $ne: true },
-        status: { $ne: "REJECTED" },
-        paymentMethod: { $in: ["CASH", null] },
-      },
-    },
-    {
-      $project: {
-        effectiveAmount: {
-          $cond: [
-            { $and: [{ $eq: ["$status", "APPROVED"] }, { $ne: ["$approvedAmount", null] }] },
-            "$approvedAmount",
-            "$amount",
-          ],
-        },
-      },
-    },
-    {
-      $group: { _id: null, total: { $sum: "$effectiveAmount" } },
-    },
-  ]);
-
   const standardCashInflow = stdAgg[0]?.inflow || 0;
   const standardCashOutflow = stdAgg[0]?.outflow || 0;
   const standardNetCash = standardCashInflow - standardCashOutflow;
   const unsettledCollectingCashHeld = colAgg[0]?.total || 0;
   const settledBeneficiaryCashReceived = benAgg[0]?.total || 0;
-  const commCrossBranchExpensePaid = commExpAgg[0]?.total || 0;
+  const commCrossBranchExpensePaid = 0;
 
   // 4. Payment method comparison for all records linked to this shop
   const pmAgg = await FinanceRecord.aggregate([
@@ -1057,7 +975,7 @@ export async function getShopCashAuditData(
   }));
 
   // 6. Recent 10 Cash records for ledger audit
-  const recentRecords = await FinanceRecord.find({
+  const rawRecent = await FinanceRecord.find({
     $or: [
       { shop: shopObjId },
       { beneficiaryShop: shopObjId, isCrossBranchPayment: true },
@@ -1066,9 +984,13 @@ export async function getShopCashAuditData(
     isDeleted: { $ne: true },
   })
     .sort({ date: -1, createdAt: -1 })
-    .limit(10)
-    .select("_id date billNumber reason type amount approvedAmount runningBalance beneficiaryRunningBalance paymentMethod beneficiaryShop shop")
+    .limit(30)
+    .select("_id date createdAt billNumber reason type amount approvedAmount runningBalance beneficiaryRunningBalance paymentMethod beneficiaryShop shop")
     .lean();
+
+  const recentRecords = rawRecent
+    .sort((a, b) => getRecordExactTimestamp(b) - getRecordExactTimestamp(a))
+    .slice(0, 10);
 
   const recentCashRecords = recentRecords.map((r: any) => {
     const isBeneficiary =

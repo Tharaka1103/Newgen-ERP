@@ -1749,19 +1749,17 @@ export function SingleShopView({
           const isBranchExpense = r.type === "EXPENSE" || Boolean(r.isCommunicationItem);
           return (
             <div className="flex flex-col gap-0.5">
-              <Badge variant="outline" className={`text-[10px] font-semibold ${
-                isBranchExpense
-                  ? "border-amber-500/40 bg-amber-500/10 text-amber-800 dark:text-amber-300"
-                  : "border-blue-500/40 bg-blue-500/10 text-blue-700 dark:text-blue-400"
-              }`}>
+              <Badge variant="outline" className={`text-[10px] font-semibold ${isBranchExpense
+                ? "border-amber-500/40 bg-amber-500/10 text-amber-800 dark:text-amber-300"
+                : "border-blue-500/40 bg-blue-500/10 text-blue-700 dark:text-blue-400"
+                }`}>
                 {isBranchExpense ? "Expense For: " : "For: "}
                 {r.beneficiaryShop?.name || r.relatedBranch?.name || "Other Branch"}
               </Badge>
-              <span className={`text-[9px] font-mono px-1 py-0 rounded border w-fit ${
-                r.interBranchSettlementStatus === "SETTLED"
-                  ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
-                  : "bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/20"
-              }`}>
+              <span className={`text-[9px] font-mono px-1 py-0 rounded border w-fit ${r.interBranchSettlementStatus === "SETTLED"
+                ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
+                : "bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/20"
+                }`}>
                 {r.interBranchSettlementStatus === "SETTLED" ? "Settled" : "Unsettled"}
               </span>
             </div>
@@ -3756,13 +3754,12 @@ export function SingleShopView({
                             </td>
                             <td className="py-2.5 px-3 whitespace-nowrap">
                               <span
-                                className={`inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full border ${
-                                  r.utilityBillType === "ELECTRICITY"
-                                    ? "bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/30"
-                                    : r.utilityBillType === "WATER"
+                                className={`inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full border ${r.utilityBillType === "ELECTRICITY"
+                                  ? "bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/30"
+                                  : r.utilityBillType === "WATER"
                                     ? "bg-blue-500/15 text-blue-700 dark:text-blue-400 border-blue-500/30"
                                     : "bg-purple-500/15 text-purple-700 dark:text-purple-400 border-purple-500/30"
-                                }`}
+                                  }`}
                               >
                                 {r.utilityBillType === "ELECTRICITY" ? (
                                   <>
@@ -3896,11 +3893,10 @@ export function SingleShopView({
                     key={p}
                     type="button"
                     onClick={() => setPeriod(p)}
-                    className={`px-3 py-1 text-xs font-semibold rounded-md transition-all ${
-                      period === p
-                        ? "bg-card text-foreground shadow-xs"
-                        : "text-muted-foreground hover:text-foreground"
-                    }`}
+                    className={`px-3 py-1 text-xs font-semibold rounded-md transition-all ${period === p
+                      ? "bg-card text-foreground shadow-xs"
+                      : "text-muted-foreground hover:text-foreground"
+                      }`}
                   >
                     {p.charAt(0).toUpperCase() + p.slice(1)}
                   </button>
@@ -4477,11 +4473,10 @@ export function SingleShopView({
                 <button
                   type="button"
                   onClick={() => createItemForm.setValue("isTelecomReload", false)}
-                  className={`flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
-                    !createItemForm.watch("isTelecomReload")
-                      ? "bg-card text-foreground shadow-xs border border-border"
-                      : "text-muted-foreground hover:text-foreground"
-                  }`}
+                  className={`flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${!createItemForm.watch("isTelecomReload")
+                    ? "bg-card text-foreground shadow-xs border border-border"
+                    : "text-muted-foreground hover:text-foreground"
+                    }`}
                 >
                   <PackageIcon className="size-3.5" />
                   <span>Standard Product</span>
@@ -4497,11 +4492,10 @@ export function SingleShopView({
                       createItemForm.setValue("commissionRate", 4.0);
                     }
                   }}
-                  className={`flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
-                    createItemForm.watch("isTelecomReload")
-                      ? "bg-primary text-primary-foreground shadow-xs"
-                      : "text-muted-foreground hover:text-foreground"
-                  }`}
+                  className={`flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${createItemForm.watch("isTelecomReload")
+                    ? "bg-primary text-primary-foreground shadow-xs"
+                    : "text-muted-foreground hover:text-foreground"
+                    }`}
                 >
                   <SmartphoneIcon className="size-3.5" />
                   <span>Telecom Reload</span>
@@ -4685,11 +4679,10 @@ export function SingleShopView({
                 <button
                   type="button"
                   onClick={() => editItemForm.setValue("isTelecomReload", false)}
-                  className={`flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
-                    !editItemForm.watch("isTelecomReload")
-                      ? "bg-card text-foreground shadow-xs border border-border"
-                      : "text-muted-foreground hover:text-foreground"
-                  }`}
+                  className={`flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${!editItemForm.watch("isTelecomReload")
+                    ? "bg-card text-foreground shadow-xs border border-border"
+                    : "text-muted-foreground hover:text-foreground"
+                    }`}
                 >
                   <PackageIcon className="size-3.5" />
                   <span>Standard Product</span>
@@ -4705,11 +4698,10 @@ export function SingleShopView({
                       editItemForm.setValue("commissionRate", 4.0);
                     }
                   }}
-                  className={`flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
-                    editItemForm.watch("isTelecomReload")
-                      ? "bg-primary text-primary-foreground shadow-xs"
-                      : "text-muted-foreground hover:text-foreground"
-                  }`}
+                  className={`flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${editItemForm.watch("isTelecomReload")
+                    ? "bg-primary text-primary-foreground shadow-xs"
+                    : "text-muted-foreground hover:text-foreground"
+                    }`}
                 >
                   <SmartphoneIcon className="size-3.5" />
                   <span>Telecom Reload</span>
@@ -5024,11 +5016,10 @@ export function SingleShopView({
                   <button
                     type="button"
                     onClick={() => setSettlementType("HANDOVER_TO_BRANCH")}
-                    className={`p-2 rounded-lg text-xs font-semibold border flex flex-col items-center justify-center text-center gap-1 transition-all ${
-                      settlementType === "HANDOVER_TO_BRANCH"
-                        ? "bg-blue-600 text-white border-blue-600 shadow-sm"
-                        : "border-border text-muted-foreground hover:bg-muted"
-                    }`}
+                    className={`p-2 rounded-lg text-xs font-semibold border flex flex-col items-center justify-center text-center gap-1 transition-all ${settlementType === "HANDOVER_TO_BRANCH"
+                      ? "bg-blue-600 text-white border-blue-600 shadow-sm"
+                      : "border-border text-muted-foreground hover:bg-muted"
+                      }`}
                   >
                     <HandCoinsIcon className="size-4" />
                     <span>Physical Handover</span>
@@ -5036,11 +5027,10 @@ export function SingleShopView({
                   <button
                     type="button"
                     onClick={() => setSettlementType("DEPOSITED_TO_BANK")}
-                    className={`p-2 rounded-lg text-xs font-semibold border flex flex-col items-center justify-center text-center gap-1 transition-all ${
-                      settlementType === "DEPOSITED_TO_BANK"
-                        ? "bg-blue-600 text-white border-blue-600 shadow-sm"
-                        : "border-border text-muted-foreground hover:bg-muted"
-                    }`}
+                    className={`p-2 rounded-lg text-xs font-semibold border flex flex-col items-center justify-center text-center gap-1 transition-all ${settlementType === "DEPOSITED_TO_BANK"
+                      ? "bg-blue-600 text-white border-blue-600 shadow-sm"
+                      : "border-border text-muted-foreground hover:bg-muted"
+                      }`}
                   >
                     <LandmarkIcon className="size-4" />
                     <span>Bank Deposit</span>
@@ -5048,11 +5038,10 @@ export function SingleShopView({
                   <button
                     type="button"
                     onClick={() => setSettlementType("DIRECT_OFFSET")}
-                    className={`p-2 rounded-lg text-xs font-semibold border flex flex-col items-center justify-center text-center gap-1 transition-all ${
-                      settlementType === "DIRECT_OFFSET"
-                        ? "bg-blue-600 text-white border-blue-600 shadow-sm"
-                        : "border-border text-muted-foreground hover:bg-muted"
-                    }`}
+                    className={`p-2 rounded-lg text-xs font-semibold border flex flex-col items-center justify-center text-center gap-1 transition-all ${settlementType === "DIRECT_OFFSET"
+                      ? "bg-blue-600 text-white border-blue-600 shadow-sm"
+                      : "border-border text-muted-foreground hover:bg-muted"
+                      }`}
                   >
                     <ArrowUpDownIcon className="size-4" />
                     <span>Direct Offset</span>
@@ -5237,11 +5226,10 @@ export function SingleShopView({
                 <button
                   type="button"
                   onClick={() => setDailySettleDestinationType("PETTY_CASH")}
-                  className={`flex flex-col items-start p-3 rounded-xl border text-left transition-all ${
-                    dailySettleDestinationType === "PETTY_CASH"
-                      ? "border-primary bg-primary/5 text-foreground ring-1 ring-primary"
-                      : "border-border bg-card text-muted-foreground hover:bg-muted/50"
-                  }`}
+                  className={`flex flex-col items-start p-3 rounded-xl border text-left transition-all ${dailySettleDestinationType === "PETTY_CASH"
+                    ? "border-primary bg-primary/5 text-foreground ring-1 ring-primary"
+                    : "border-border bg-card text-muted-foreground hover:bg-muted/50"
+                    }`}
                 >
                   <div className="flex items-center gap-2 mb-1">
                     <CoinsIcon className="size-4 text-blue-600" />
@@ -5255,11 +5243,10 @@ export function SingleShopView({
                 <button
                   type="button"
                   onClick={() => setDailySettleDestinationType("BANK_ACCOUNT")}
-                  className={`flex flex-col items-start p-3 rounded-xl border text-left transition-all ${
-                    dailySettleDestinationType === "BANK_ACCOUNT"
-                      ? "border-primary bg-primary/5 text-foreground ring-1 ring-primary"
-                      : "border-border bg-card text-muted-foreground hover:bg-muted/50"
-                  }`}
+                  className={`flex flex-col items-start p-3 rounded-xl border text-left transition-all ${dailySettleDestinationType === "BANK_ACCOUNT"
+                    ? "border-primary bg-primary/5 text-foreground ring-1 ring-primary"
+                    : "border-border bg-card text-muted-foreground hover:bg-muted/50"
+                    }`}
                 >
                   <div className="flex items-center gap-2 mb-1">
                     <LandmarkIcon className="size-4 text-indigo-600" />
@@ -5375,7 +5362,7 @@ export function SingleShopView({
 
       {/* Cash Drawer Audit & Diagnostic Dialog */}
       <Dialog open={auditOpen} onOpenChange={setAuditOpen}>
-        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="w-full sm:max-w-4xl lg:max-w-5xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <div className="flex items-center gap-2.5">
               <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
@@ -5400,11 +5387,10 @@ export function SingleShopView({
           ) : cashAuditData ? (
             <div className="space-y-5 py-2">
               {/* Top Banner: Status & Sync Check */}
-              <div className={`p-4 rounded-xl border flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 ${
-                cashAuditData.isOutOfSync
-                  ? "bg-amber-500/10 border-amber-500/30 text-amber-900 dark:text-amber-300"
-                  : "bg-emerald-500/10 border-emerald-500/30 text-emerald-900 dark:text-emerald-300"
-              }`}>
+              <div className={`p-4 rounded-xl border flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 ${cashAuditData.isOutOfSync
+                ? "bg-amber-500/10 border-amber-500/30 text-amber-900 dark:text-amber-300"
+                : "bg-emerald-500/10 border-emerald-500/30 text-emerald-900 dark:text-emerald-300"
+                }`}>
                 <div className="flex items-start gap-3">
                   {cashAuditData.isOutOfSync ? (
                     <AlertTriangleIcon className="size-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />

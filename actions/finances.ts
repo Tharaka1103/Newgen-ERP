@@ -291,7 +291,16 @@ export async function createFinanceRecordAction(formData: unknown) {
       return { success: false, error: "Invalid or inactive category." };
     }
 
-    const recordDate = new Date(result.data.date);
+    const now = new Date();
+    let recordDate = new Date(result.data.date);
+    // If input date matches today's date and has midnight UTC time, attach current time so sorting matches creation order
+    const isToday =
+      recordDate.getUTCFullYear() === now.getUTCFullYear() &&
+      recordDate.getUTCMonth() === now.getUTCMonth() &&
+      recordDate.getUTCDate() === now.getUTCDate();
+    if (isToday && recordDate.getUTCHours() === 0 && recordDate.getUTCMinutes() === 0) {
+      recordDate.setHours(now.getHours(), now.getMinutes(), now.getSeconds(), now.getMilliseconds());
+    }
     const isCommShop = shop.shopType === "COMMUNICATION";
     const isCrossBranch = Boolean(result.data.isCrossBranchPayment);
     const isBranchRelated = Boolean(result.data.isRelatedToBranch) || isCrossBranch;
@@ -449,7 +458,11 @@ export async function updateFinanceRecordAction(formData: unknown) {
     const previousAmount = record.amount;
     const previousDate = record.date;
 
-    record.date = new Date(result.data.date);
+    const newDateStr = typeof result.data.date === "string" ? result.data.date.split("T")[0] : new Date(result.data.date).toISOString().split("T")[0];
+    const prevDateStr = record.date ? new Date(record.date).toISOString().split("T")[0] : "";
+    if (newDateStr !== prevDateStr) {
+      record.date = new Date(result.data.date);
+    }
     record.category = new mongoose.Types.ObjectId(result.data.category);
     record.paymentMethod = result.data.paymentMethod;
     if (result.data.bankAccount) {
